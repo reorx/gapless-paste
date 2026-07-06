@@ -77,6 +77,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(actionItem("打开配置", #selector(openConfig)))
         menu.addItem(actionItem("重载配置", #selector(reloadConfig)))
+        menu.addItem(actionItem("打开日志", #selector(openLog)))
         let quitItem = NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quitItem)
     }
@@ -110,6 +111,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     @objc private func openConfig() {
         appState.openConfig()
+    }
+
+    @objc private func openLog() {
+        appState.openLog()
     }
 
     @objc private func reloadConfig() {

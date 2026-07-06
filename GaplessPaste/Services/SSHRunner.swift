@@ -1,7 +1,9 @@
 import Foundation
+import GaplessPasteCore
 
 // Process 执行 ssh/scp + 超时 + stdout/stderr 采集。
 // 上层（AppState）以 isBusy 保证单任务串行，这里不做队列。
+// 每条命令的 argv、耗时、退出码、stderr 全部进日志，便于命令行侧排错。
 
 struct CommandResult {
     let exitCode: Int32
@@ -28,13 +30,32 @@ enum SSHRunnerError: Error, LocalizedError {
 }
 
 final class SSHRunner: Sendable {
+    private let log: LogService
+
+    init(log: LogService) {
+        self.log = log
+    }
+
     func run(_ argv: [String], timeout: TimeInterval = 60) async throws -> CommandResult {
-        try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global(qos: .userInitiated).async {
+        log.debug("$ \(LogFormatter.describeCommand(argv))")
+        let started = Date()
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async { [log] in
                 do {
                     let result = try Self.runBlocking(argv, timeout: timeout)
+                    let elapsed = String(format: "%.2fs", Date().timeIntervalSince(started))
+                    if result.succeeded {
+                        log.debug("exit 0 (\(elapsed))")
+                    } else {
+                        var message = "exit \(result.exitCode) (\(elapsed))"
+                        if !result.stderr.isEmpty {
+                            message += "\nstderr: \(result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))"
+                        }
+                        log.info(message)
+                    }
                     continuation.resume(returning: result)
                 } catch {
+                    log.error("命令异常：\(error.localizedDescription)")
                     continuation.resume(throwing: error)
                 }
             }

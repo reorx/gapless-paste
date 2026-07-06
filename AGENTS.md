@@ -50,6 +50,12 @@ make clean       # 清理构建产物与生成的 xcodeproj
 1. `core-tests`：`cd GaplessPasteCore && swift test`
 2. `app-build`：xcodegen + 无签名 xcodebuild（`CODE_SIGNING_ALLOWED=NO`），验证 project.yml 与 app target 始终可编译
 
+## 日志
+
+- 运行时日志固定写到 `~/Library/Logs/GaplessPaste/GaplessPaste.log`（超 5MB 滚动为 `.log.1`）
+- 菜单「打开日志」打开该文件；命令行排错直接 `tail -f` / `cat` 它
+- 每条 ssh/scp 命令的完整 argv、耗时、退出码、stderr 都在日志里（DEBUG/INFO 级）
+
 ## 排错顺序
 
 构建怪异时先怀疑环境再怀疑代码：

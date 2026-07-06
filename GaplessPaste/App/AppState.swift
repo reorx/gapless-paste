@@ -24,9 +24,10 @@ enum AppError: Error, LocalizedError {
 @MainActor
 final class AppState {
     let configStore = ConfigStore()
+    let log = LogService()
     private let pasteboard = PasteboardService()
     private let notifier = NotificationService()
-    private let runner = SSHRunner()
+    private let runner: SSHRunner
     private let renamePopup = RenamePopup()
     private let commandBuilder: SSHCommandBuilder
     private let probeService: ProbeService
@@ -55,8 +56,18 @@ final class AppState {
             attributes: [.posixPermissions: 0o700]
         )
         commandBuilder = SSHCommandBuilder(controlPathDirectory: socketsDir.path)
+        runner = SSHRunner(log: log)
         probeService = ProbeService(runner: runner, builder: commandBuilder)
         notifier.requestAuthorization()
+
+        log.info("==== GaplessPaste 启动 (pid \(ProcessInfo.processInfo.processIdentifier)) ====")
+        log.info("ControlPath 目录：\(socketsDir.path)")
+        switch configStore.lastResult {
+        case .success(let config):
+            log.info("配置加载成功：\(config.machines.count) 台机器")
+        case .failure(let error):
+            log.error("配置加载失败：\(error.localizedDescription)")
+        }
     }
 
     // MARK: - 菜单动作
@@ -78,13 +89,19 @@ final class AppState {
         configStore.openInEditor()
     }
 
+    func openLog() {
+        log.openInViewer()
+    }
+
     func reloadConfig() {
         configStore.load()
         probeService.clearCache()
         switch configStore.lastResult {
         case .success(let config):
+            log.info("配置已重载：\(config.machines.count) 台机器，探测缓存已清空")
             notifier.notify(title: "GaplessPaste", body: "配置已重载（\(config.machines.count) 台机器），探测缓存已清空")
         case .failure(let error):
+            log.error("配置重载失败：\(error.localizedDescription)")
             notifier.notify(title: "配置解析失败", body: error.localizedDescription)
         }
     }
@@ -99,7 +116,9 @@ final class AppState {
             imagePNGData: snapshot.imagePNGData,
             text: snapshot.text
         )
+        log.info("触发上传 → \(machine.name)/\(directory.name)，剪贴板分类：\(describe(content))")
         if case .rejected(let rejection) = TransferPlanner.plan(for: content) {
+            log.info("拒绝：\(rejection.userMessage)")
             notifier.notify(title: "GaplessPaste", body: rejection.userMessage)
             return
         }
@@ -115,6 +134,7 @@ final class AppState {
         case .imageData(let png):
             // 重命名浮窗（Enter 确认 / Esc 取消），M1 不覆盖本地剪贴板
             guard let payloadFromImage = await promptAndStageImage(png: png, machine: machine, directory: directory) else {
+                log.info("图像上传取消（用户 Esc 或图像写盘失败）")
                 return // 用户取消，剪贴板不动，静默返回
             }
             payload = payloadFromImage
@@ -166,6 +186,7 @@ final class AppState {
                 }
                 let names = payload.items.map(\.desiredName).joined(separator: ", ")
                 statusLine = "上次：✓ \(names) → \(machine.name)/\(directory.name)"
+                log.info("上传成功：\n\(remotePaths.joined(separator: "\n"))")
                 notifier.notify(
                     title: "已上传到 \(machine.name)/\(directory.name)",
                     body: remotePaths.joined(separator: "\n")
@@ -176,6 +197,7 @@ final class AppState {
                 retryAction = { [weak self] in
                     self?.transfer(machine: machine, directory: directory, payload: payload)
                 }
+                log.error("上传失败：\(error.localizedDescription)")
                 notifier.notify(title: "上传失败", body: error.localizedDescription)
             }
         }
@@ -186,6 +208,7 @@ final class AppState {
         let host = machine.sshAlias
         let probe = try await probeService.probe(host)
         let remoteDir = probe.expandPath(directory.path)
+        log.info("探测 \(host)：home=\(probe.home) uname=\(probe.unameString)，目标目录 \(remoteDir)")
 
         let mkdir = try await runner.run(commandBuilder.mkdirCommand(host: host, remoteDirectory: remoteDir), timeout: 20)
         guard mkdir.succeeded else {
@@ -220,6 +243,19 @@ final class AppState {
             remotePaths.append(remotePath)
         }
         return remotePaths
+    }
+
+    private func describe(_ content: ClassifiedContent) -> String {
+        switch content {
+        case .fileReferences(let urls):
+            return "文件引用 ×\(urls.count)（\(urls.map(\.lastPathComponent).joined(separator: ", "))）"
+        case .imageData(let data):
+            return "图像数据 \(data.count) bytes"
+        case .text(let text):
+            return "文本 \(text.count) 字符"
+        case .empty:
+            return "空"
+        }
     }
 
     private func remoteExists(host: String, path: String) async throws -> Bool {
