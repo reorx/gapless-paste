@@ -50,4 +50,28 @@ public struct SSHCommandBuilder: Sendable {
     public static func shellQuote(_ string: String) -> String {
         "'" + string.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
     }
+
+    // MARK: - ControlPath 长度预算
+    // unix socket 的 sun_path 上限 104 字节（含 NUL 终止符），可用 103。
+    // %C 展开为 40 字符哈希；ssh 建 listener 时会先用「最终名 + .s<16 随机字符>」
+    // 的临时名（共 17 字符后缀），必须一并预留，否则报
+    // "unix_listener: path ... too long for Unix domain socket"
+
+    public static let maxUnixSocketPathLength = 103
+    private static let controlPathOverhead = 1 + 40 + 17 // "/" + %C 哈希 + 临时后缀
+
+    public static func predictedSocketPathLength(forDirectory directory: String) -> Int {
+        directory.utf8.count + controlPathOverhead
+    }
+
+    public static func isUsableControlPathDirectory(_ directory: String) -> Bool {
+        predictedSocketPathLength(forDirectory: directory) <= maxUnixSocketPathLength
+    }
+
+    /// 默认 socket 目录：/tmp/gaplesspaste-<uid>。
+    /// 选 /tmp 是因为 Caches/Application Support 前缀都太长（见上方预算）；
+    /// 目录须由 app 侧以 0700 创建，保证用户私有
+    public static func defaultControlPathDirectory(uid: UInt32) -> String {
+        "/tmp/gaplesspaste-\(uid)"
+    }
 }

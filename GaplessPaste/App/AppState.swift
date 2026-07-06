@@ -45,23 +45,22 @@ final class AppState {
     }
 
     init() {
-        // ControlMaster socket 放 Caches：路径无空格（ssh -o 值按配置行分词，
-        // Application Support 的空格会打断），且 unix socket 路径有长度上限
-        let socketsDir = FileManager.default
-            .urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("com.reorx.gaplesspaste/sockets", isDirectory: true)
+        // ControlMaster socket 目录：必须短（sun_path 104 字节上限，预算见
+        // SSHCommandBuilder）且无空格（ssh -o 值按配置行分词）。
+        // Caches / Application Support 前缀都超预算，只能落在 /tmp，0700 保证用户私有
+        let socketsDir = SSHCommandBuilder.defaultControlPathDirectory(uid: getuid())
         try? FileManager.default.createDirectory(
-            at: socketsDir,
+            atPath: socketsDir,
             withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700]
         )
-        commandBuilder = SSHCommandBuilder(controlPathDirectory: socketsDir.path)
+        commandBuilder = SSHCommandBuilder(controlPathDirectory: socketsDir)
         runner = SSHRunner(log: log)
         probeService = ProbeService(runner: runner, builder: commandBuilder)
         notifier.requestAuthorization()
 
         log.info("==== GaplessPaste 启动 (pid \(ProcessInfo.processInfo.processIdentifier)) ====")
-        log.info("ControlPath 目录：\(socketsDir.path)")
+        log.info("ControlPath 目录：\(socketsDir)（socket 路径预算 \(SSHCommandBuilder.predictedSocketPathLength(forDirectory: socketsDir))/\(SSHCommandBuilder.maxUnixSocketPathLength)）")
         switch configStore.lastResult {
         case .success(let config):
             log.info("配置加载成功：\(config.machines.count) 台机器")
