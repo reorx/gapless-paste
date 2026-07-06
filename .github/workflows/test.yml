@@ -1,0 +1,30 @@
+name: test
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  core-tests:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run GaplessPasteCore tests
+        run: cd GaplessPasteCore && swift test
+
+  app-build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: brew install xcodegen xcbeautify
+      - name: Generate project
+        run: xcodegen
+      - name: Build app (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild -project GaplessPaste.xcodeproj -scheme GaplessPaste \
+            -configuration Debug -destination 'platform=macOS' \
+            -derivedDataPath .build/DerivedData \
+            CODE_SIGNING_ALLOWED=NO build | xcbeautify

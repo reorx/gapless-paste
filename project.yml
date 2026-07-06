@@ -1,0 +1,43 @@
+name: GaplessPaste
+options:
+  bundleIdPrefix: com.reorx
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+# 第三方依赖统一在 GaplessPasteCore/Package.swift 声明，app target 传递依赖
+packages:
+  GaplessPasteCore:
+    path: GaplessPasteCore
+
+configFiles:
+  Debug: Config/Debug.xcconfig
+  Release: Config/Release.xcconfig
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    ENABLE_HARDENED_RUNTIME: YES
+
+targets:
+  GaplessPaste:
+    type: application
+    platform: macOS
+    sources:
+      - GaplessPaste
+    dependencies:
+      - package: GaplessPasteCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.reorx.gaplesspaste
+    info:
+      path: GaplessPaste/Info.plist
+      properties:
+        CFBundleDisplayName: GaplessPaste
+        LSUIElement: true
+    entitlements:
+      path: GaplessPaste/GaplessPaste.entitlements
+      properties:
+        # 非沙箱：CGEventTap / AX 注入等系统级能力与沙箱不兼容；
+        # 若 app 不需要这些能力且计划上 App Store，改为 true
+        com.apple.security.app-sandbox: false
