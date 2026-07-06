@@ -22,6 +22,11 @@ final class ProbeService {
         }
     }
 
+    /// 只读缓存查询（菜单据此对非 Darwin 机器禁用「同步剪贴板」；nil = 尚未探测）
+    func cached(_ sshAlias: String) -> ProbeResult? {
+        cache[sshAlias]
+    }
+
     func probe(_ sshAlias: String) async throws -> ProbeResult {
         if let cached = cache[sshAlias] {
             return cached

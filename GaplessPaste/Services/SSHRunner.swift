@@ -36,13 +36,15 @@ final class SSHRunner: Sendable {
         self.log = log
     }
 
-    func run(_ argv: [String], timeout: TimeInterval = 60) async throws -> CommandResult {
-        log.debug("$ \(LogFormatter.describeCommand(argv))")
+    /// stdin 非 nil 时把数据写入子进程标准输入后关闭（pbcopy 文本注入用，
+    /// 避免文本进 argv 的长度与转义问题）
+    func run(_ argv: [String], timeout: TimeInterval = 60, stdin: Data? = nil) async throws -> CommandResult {
+        log.debug("$ \(LogFormatter.describeCommand(argv))\(stdin.map { " <<< (\($0.count) bytes stdin)" } ?? "")")
         let started = Date()
         return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async { [log] in
                 do {
-                    let result = try Self.runBlocking(argv, timeout: timeout)
+                    let result = try Self.runBlocking(argv, timeout: timeout, stdin: stdin)
                     let elapsed = String(format: "%.2fs", Date().timeIntervalSince(started))
                     if result.succeeded {
                         log.debug("exit 0 (\(elapsed))")
@@ -62,17 +64,34 @@ final class SSHRunner: Sendable {
         }
     }
 
-    private static func runBlocking(_ argv: [String], timeout: TimeInterval) throws -> CommandResult {
+    private static func runBlocking(_ argv: [String], timeout: TimeInterval, stdin: Data?) throws -> CommandResult {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: argv[0])
         process.arguments = Array(argv.dropFirst())
-        process.standardInput = FileHandle.nullDevice
+        let stdinPipe: Pipe?
+        if stdin != nil {
+            let pipe = Pipe()
+            process.standardInput = pipe
+            stdinPipe = pipe
+        } else {
+            process.standardInput = FileHandle.nullDevice
+            stdinPipe = nil
+        }
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
         try process.run()
+
+        // stdin 在后台写入并关闭（EOF 让远端 pbcopy 结束读取）；
+        // 写满管道缓冲区会阻塞，不能占用当前线程
+        if let stdinPipe, let stdin {
+            DispatchQueue.global().async {
+                try? stdinPipe.fileHandleForWriting.write(contentsOf: stdin)
+                try? stdinPipe.fileHandleForWriting.close()
+            }
+        }
 
         // 超时看门狗：到点 SIGTERM，读端随 EOF 返回
         let timedOut = NSMutableString(string: "")

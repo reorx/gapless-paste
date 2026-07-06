@@ -65,6 +65,18 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         case .success(let config):
             for machine in config.machines {
                 menu.addItem(NSMenuItem.sectionHeader(title: machine.name))
+                // 每台机器区第一项：同步剪贴板。已探测为非 Darwin 时禁用（降级语义不成立），
+                // 未探测时保持可用（点击时探测，非 Darwin 则提示并在下次打开菜单置灰）
+                let knownDarwin = appState.remoteIsDarwinIfKnown(machine: machine)
+                let syncItem: NSMenuItem
+                if knownDarwin == false {
+                    syncItem = disabledItem("⇄ 同步剪贴板（远端非 macOS）")
+                } else {
+                    syncItem = actionItem("⇄ 同步剪贴板", #selector(syncClipboard(_:)))
+                    syncItem.representedObject = machine
+                    syncItem.isEnabled = !appState.isBusy
+                }
+                menu.addItem(syncItem)
                 for directory in machine.directories {
                     let item = actionItem("📁 \(directory.name)", #selector(uploadToTarget(_:)))
                     item.representedObject = UploadTarget(machine: machine, directory: directory)
@@ -99,6 +111,11 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     @objc private func uploadToTarget(_ sender: NSMenuItem) {
         guard let target = sender.representedObject as? UploadTarget else { return }
         appState.upload(machine: target.machine, directory: target.directory)
+    }
+
+    @objc private func syncClipboard(_ sender: NSMenuItem) {
+        guard let machine = sender.representedObject as? Machine else { return }
+        appState.syncClipboard(machine: machine)
     }
 
     @objc private func copyLastPaths() {
