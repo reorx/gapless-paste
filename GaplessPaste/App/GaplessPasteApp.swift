@@ -21,5 +21,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         appState = AppState()
         menuController = StatusMenuController(appState: appState)
+        #if DEBUG
+        DebugHooks.install()
+        #endif
+        // 首启（刚写入示例模板）：打开设置窗口引导用户配置，取代旧的「打开配置文件」
+        if appState.configStore.isFirstLaunch {
+            appState.openSettings()
+        }
     }
 }

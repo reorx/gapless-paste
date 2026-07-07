@@ -64,7 +64,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         case .failure(let error):
             menu.addItem(disabledItem("⚠️ 配置错误：\(error.localizedDescription)"))
         case .success(let config) where config.machines.isEmpty:
-            menu.addItem(disabledItem("配置里还没有机器，先打开配置添加"))
+            menu.addItem(disabledItem("还没有机器，去「设置…」添加"))
         case .success(let config):
             for machine in config.machines {
                 menu.addItem(NSMenuItem.sectionHeader(title: machine.name))
@@ -90,7 +90,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         }
 
         menu.addItem(.separator())
-        menu.addItem(actionItem("打开配置", #selector(openConfig)))
+        let settingsItem = actionItem("设置…", #selector(openSettings))
+        settingsItem.keyEquivalent = ","
+        menu.addItem(settingsItem)
         menu.addItem(actionItem("重载配置", #selector(reloadConfig)))
         menu.addItem(actionItem("打开日志", #selector(openLog)))
         let quitItem = NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
@@ -129,8 +131,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         appState.retryLastOperation()
     }
 
-    @objc private func openConfig() {
-        appState.openConfig()
+    @objc private func openSettings() {
+        appState.openSettings()
     }
 
     @objc private func openLog() {

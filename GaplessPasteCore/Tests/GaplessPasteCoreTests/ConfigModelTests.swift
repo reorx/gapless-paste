@@ -74,3 +74,52 @@ struct ConfigModelTests {
         #expect(!config.machines[0].directories.isEmpty)
     }
 }
+
+@Suite("配置模型：GUI 编辑与序列化")
+struct ConfigSerializationTests {
+    private var sample: Config {
+        Config(machines: [
+            Machine(name: "mini", sshAlias: "mini-alias", directories: [
+                RemoteDirectory(name: "inbox", path: "~/claude-inbox"),
+                RemoteDirectory(name: "screenshots", path: "~/claude-inbox/screenshots"),
+            ]),
+            Machine(name: "vps", sshAlias: "vps", directories: []),
+        ])
+    }
+
+    @Test("serialize → parse 往返等值（机器与目录顺序保持）")
+    func roundTrip() throws {
+        let data = try sample.serialize()
+        let parsed = try Config.parse(data)
+        #expect(parsed == sample)
+        #expect(parsed.machines.map(\.name) == ["mini", "vps"])
+        #expect(parsed.machines[0].directories.map(\.name) == ["inbox", "screenshots"])
+    }
+
+    @Test("serialize 输出人类可读：多行缩进、~/ 不转义")
+    func serializeIsHumanReadable() throws {
+        let text = String(decoding: try sample.serialize(), as: UTF8.self)
+        #expect(text.contains("\n"))
+        #expect(text.contains("~/claude-inbox"))
+        #expect(!text.contains("\\/"))
+    }
+
+    @Test("serialize 校验失败时抛错，不产出非法配置文件")
+    func serializeValidatesFirst() {
+        let bad = Config(machines: [Machine(name: "", sshAlias: "x", directories: [])])
+        #expect(throws: ConfigError.self) {
+            try bad.serialize()
+        }
+    }
+
+    @Test("模型属性可变，支持 GUI 就地编辑")
+    func modelIsMutable() {
+        var config = sample
+        config.machines[0].name = "mini2"
+        config.machines[0].sshAlias = "mini2"
+        config.machines[0].directories[0].path = "~/inbox2"
+        config.machines.append(Machine(name: "new", sshAlias: "new", directories: []))
+        #expect(config.machines.count == 3)
+        #expect(config.machines[0].directories[0].path == "~/inbox2")
+    }
+}

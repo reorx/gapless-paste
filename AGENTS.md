@@ -4,8 +4,8 @@ macOS 菜单栏工具：把本机剪贴板里的截图/文件/文本以最少步
 
 ## 进度
 
-- M1 目录上传闭环 ✅、M2 剪贴板闭环 ✅、M3 拖拽上传（图标 drop 检测 + DropPanel）✅
-- M4 待做：全局热键、设置 UI、登录启动项、浏览器拖图评估
+- M1 目录上传闭环 ✅、M2 剪贴板闭环 ✅、M3 拖拽上传（图标 drop 检测 + DropPanel）✅、M4 设置 UI（GUI 编辑配置，SettingsWindow）✅
+- M4 待做：全局热键、登录启动项、浏览器拖图评估
 - 历次改动细节见 `kb/sessions/`
 
 ## 技术栈
@@ -55,6 +55,41 @@ make clean       # 清理构建产物与生成的 xcodeproj
 
 1. `core-tests`：`cd GaplessPasteCore && swift test`
 2. `app-build`：xcodegen + 无签名 xcodebuild（`CODE_SIGNING_ALLOWED=NO`），验证 project.yml 与 app target 始终可编译
+
+## 配置与设置界面
+
+- 配置文件：`~/Library/Application Support/GaplessPaste/config.json`，模型在 Core 的 `ConfigModel.swift`（parse/validate/serialize 同一套规则）
+- 主要编辑入口是菜单「设置…」（`GaplessPaste/UI/SettingsWindow.swift`）：编辑即校验，合法则防抖 0.5s 自动写盘并热重载（无「保存」按钮），非法暂缓落盘并显示内联提示
+- GUI 保存会整体重写 JSON（sortedKeys），`_readme` 等未知键会丢失，这是预期行为；手改文件仍可走「重载配置」
+- 首启写入模板后直接打开设置窗口（不再打开文本编辑器）
+
+## UI 自动化验收（真机模拟操作 + 截图，已验证可行）
+
+本机不装任何新自动化工具（Peekaboo 等新二进制都需要用户手动过 TCC 授权，走不通）。可行通道只有两条：AppleScript AX（iTerm2 已有 Accessibility）+ app 自截图（零 TCC）。
+
+**截图：app 自截图，不要用 `screencapture`**
+
+- 本机 iTerm2 的 Screen Recording 在 TCC 里被明确拒绝（auth=0），`screencapture` 必失败；查授权状态：`sqlite3 /Library/"Application Support"/com.apple.TCC/TCC.db "SELECT service,client,auth_value FROM access WHERE service='kTCCServiceScreenCapture'"`
+- DEBUG 构建内置自截图钩子 `App/DebugHooks.swift`：监听分布式通知，用 `NSView.cacheDisplay` 截 app 自己的每个可见窗口（含标题栏），**不需要任何 TCC 权限**
+- 触发：`swift tmp/capture.swift <输出目录>`，每个可见窗口输出一张 `window-<n>-<标题>.png`
+
+**模拟操作：AppleScript AX，按 `accessibilityIdentifier` 定位**
+
+- 给可交互控件埋 `.accessibilityIdentifier("xxx")`（映射为 AXIdentifier），脚本里用 `entire contents of window` 递归枚举后按 identifier 过滤——`whose` 子句不递归，别指望它
+- 现成脚本：`tmp/ax_click.applescript <id>` 点按钮；`tmp/ax_paste.applescript <id> <第几个> <文本>` 往文本框填值
+- 状态栏菜单路径：LSUIElement app 的 status item 是 `menu bar item 1 of menu bar 2 of process "GaplessPaste"`，click 展开后再 click 里面的 menu item；读菜单项标题（`name of every menu item`）可无截图验证菜单状态，`key code 53`（Esc）收起菜单
+- 操作前 `set frontmost to true`（LSUIElement app 不会自己在前台）
+
+**两个必踩的坑（都已验证）**
+
+- SwiftUI TextField 直接 `set value of text field`（AXValue）只改显示、**不触发 binding**，数据不会真正变化——必须发真实键盘事件
+- 中文输入法会把 `keystroke` 的字母吞进组合缓冲（只有 `-` 等符号直通）——填文本一律走剪贴板：`set the clipboard to`… 后 `⌘A` + `⌘V`；操作前 `pbpaste` 备份用户剪贴板，结束后恢复
+
+**验收闭环**
+
+1. 先备份将被改动的真实数据（如 `config.json`）和用户剪贴板
+2. `make build && make run` → AX 打开目标界面 → 每步操作后**读实际落盘文件/日志**核对（不要只看 UI），关键状态触发自截图
+3. 结束后恢复备份、恢复剪贴板，让 app 重载，确认现场还原
 
 ## 日志
 

@@ -31,6 +31,10 @@ final class AppState {
     private let renamePopup = RenamePopup()
     private let commandBuilder: SSHCommandBuilder
     private let probeService: ProbeService
+    private lazy var settingsController = SettingsWindowController(
+        onSave: { [weak self] config in self?.applySettings(config) },
+        openConfigFile: { [weak self] in self?.openConfig() }
+    )
 
     private(set) var isBusy = false
     private(set) var statusLine: String?
@@ -98,6 +102,29 @@ final class AppState {
 
     func openConfig() {
         configStore.openInEditor()
+    }
+
+    /// 打开设置窗口（草稿从当前内存配置初始化；解析失败时从空配置起步）
+    func openSettings() {
+        let config: Config
+        if case .success(let current) = configStore.lastResult {
+            config = current
+        } else {
+            config = Config(machines: [])
+        }
+        settingsController.show(config: config)
+    }
+
+    /// 设置界面落盘回调：写 config.json + 清探测缓存（同「重载配置」语义，但不弹通知）
+    private func applySettings(_ config: Config) {
+        do {
+            try configStore.save(config)
+            probeService.clearCache()
+            log.info("设置已保存：\(config.machines.count) 台机器，探测缓存已清空")
+        } catch {
+            log.error("设置保存失败：\(error.localizedDescription)")
+            notifier.notify(title: "设置保存失败", body: error.localizedDescription)
+        }
     }
 
     func openLog() {

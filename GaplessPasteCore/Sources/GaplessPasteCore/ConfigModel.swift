@@ -4,8 +4,8 @@ import Foundation
 // JSONDecoder 默认忽略未知键，顶层 _readme 说明字段天然被跳过
 
 public struct RemoteDirectory: Codable, Equatable, Sendable {
-    public let name: String
-    public let path: String
+    public var name: String
+    public var path: String
 
     public init(name: String, path: String) {
         self.name = name
@@ -14,9 +14,9 @@ public struct RemoteDirectory: Codable, Equatable, Sendable {
 }
 
 public struct Machine: Codable, Equatable, Sendable {
-    public let name: String
-    public let sshAlias: String
-    public let directories: [RemoteDirectory]
+    public var name: String
+    public var sshAlias: String
+    public var directories: [RemoteDirectory]
 
     public init(name: String, sshAlias: String, directories: [RemoteDirectory]) {
         self.name = name
@@ -46,7 +46,7 @@ public enum ConfigError: Error, Equatable, LocalizedError {
 }
 
 public struct Config: Codable, Equatable, Sendable {
-    public let machines: [Machine]
+    public var machines: [Machine]
 
     public init(machines: [Machine]) {
         self.machines = machines
@@ -57,6 +57,14 @@ public struct Config: Codable, Equatable, Sendable {
         let config = try JSONDecoder().decode(Config.self, from: data)
         try config.validate()
         return config
+    }
+
+    /// 校验 + 编码一步完成（GUI 保存路径）：pretty JSON，字段序稳定，~/ 不转义
+    public func serialize() throws -> Data {
+        try validate()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        return try encoder.encode(self)
     }
 
     public func validate() throws {
