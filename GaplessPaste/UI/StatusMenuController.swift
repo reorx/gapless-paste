@@ -8,6 +8,7 @@ import GaplessPasteCore
 final class StatusMenuController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let appState: AppState
+    private var dropPanelController: DropPanelController!
 
     /// 菜单项 representedObject 载体（machine × directory）
     private final class UploadTarget: NSObject {
@@ -31,6 +32,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.autoenablesItems = false
         menu.delegate = self
         statusItem.menu = menu
+        // M3：图标 drop 检测 + 拖拽目标面板
+        dropPanelController = DropPanelController(appState: appState, statusButton: statusItem.button)
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {

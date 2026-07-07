@@ -117,6 +117,25 @@ final class AppState {
         }
     }
 
+    // MARK: - 拖拽上传（路径 C）
+
+    /// DropPanel 目录行收到 drop：按文件引用模式上传（同路径 A），路径回传本地剪贴板
+    func uploadDroppedFiles(_ urls: [URL], machine: Machine, directory: RemoteDirectory) {
+        guard !isBusy else { return }
+        let files = urls.filter(\.isFileURL)
+        guard !files.isEmpty else {
+            notifier.notify(title: "GaplessPaste", body: "拖拽内容里没有可上传的文件")
+            return
+        }
+        log.info("拖拽上传 → \(machine.name)/\(directory.name)：\(files.map(\.lastPathComponent).joined(separator: ", "))")
+        let payload = Payload(
+            items: files.map { ($0.path, NameGenerator.sanitize($0.lastPathComponent)) },
+            writePathsBackToClipboard: true,
+            isImage: false
+        )
+        transfer(machine: machine, directory: directory, payload: payload)
+    }
+
     // MARK: - 上传流程
 
     private func prepareAndTransfer(machine: Machine, directory: RemoteDirectory) async {

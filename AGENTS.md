@@ -1,6 +1,12 @@
 # GaplessPaste
 
-macOS 菜单栏工具：把本机剪贴板里的截图/文件/文本以最少步骤传到 SSH 可达的远端机器（目录上传 + 剪贴板同步），让远端的 Claude Code 立刻可用。完整需求见 `kb/plans/2026-07-06-gapless-paste-v1-spec.md`。
+macOS 菜单栏工具：把本机剪贴板里的截图/文件/文本以最少步骤传到 SSH 可达的远端机器（目录上传 + 剪贴板同步 + 拖拽上传），让远端的 Claude Code 立刻可用。完整需求见 `kb/plans/2026-07-06-gapless-paste-v1-spec.md`。
+
+## 进度
+
+- M1 目录上传闭环 ✅、M2 剪贴板闭环 ✅、M3 拖拽上传（图标 drop 检测 + DropPanel）✅
+- M4 待做：全局热键、设置 UI、登录启动项、浏览器拖图评估
+- 历次改动细节见 `kb/sessions/`
 
 ## 技术栈
 
