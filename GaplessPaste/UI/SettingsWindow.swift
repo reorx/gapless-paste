@@ -13,11 +13,13 @@ final class SettingsModel: ObservableObject {
         let id: UUID
         var name: String
         var path: String
+        var defaultOf: DirectoryRole?
 
-        init(id: UUID = UUID(), name: String = "", path: String = "") {
+        init(id: UUID = UUID(), name: String = "", path: String = "", defaultOf: DirectoryRole? = nil) {
             self.id = id
             self.name = name
             self.path = path
+            self.defaultOf = defaultOf
         }
     }
 
@@ -60,7 +62,7 @@ final class SettingsModel: ObservableObject {
             EditableMachine(
                 name: machine.name,
                 sshAlias: machine.sshAlias,
-                directories: machine.directories.map { EditableDirectory(name: $0.name, path: $0.path) }
+                directories: machine.directories.map { EditableDirectory(name: $0.name, path: $0.path, defaultOf: $0.defaultOf) }
             )
         }
         savedSnapshot = machines
@@ -101,7 +103,7 @@ final class SettingsModel: ObservableObject {
             Machine(
                 name: machine.name,
                 sshAlias: machine.sshAlias,
-                directories: machine.directories.map { RemoteDirectory(name: $0.name, path: $0.path) }
+                directories: machine.directories.map { RemoteDirectory(name: $0.name, path: $0.path, defaultOf: $0.defaultOf) }
             )
         })
     }
@@ -226,10 +228,19 @@ struct SettingsView: View {
                 ForEach(machine.directories) { $directory in
                     HStack(spacing: 8) {
                         TextField("名称", text: $directory.name, prompt: Text("名称"))
-                            .frame(width: 130)
+                            .frame(width: 120)
                             .accessibilityIdentifier("directory-name")
                         TextField("路径", text: $directory.path, prompt: Text("远端路径，支持 ~/ 前缀"))
                             .accessibilityIdentifier("directory-path")
+                        Picker("默认", selection: $directory.defaultOf) {
+                            Text("普通").tag(DirectoryRole?.none)
+                            Text("文件默认").tag(DirectoryRole?.some(.file))
+                            Text("图像默认").tag(DirectoryRole?.some(.image))
+                        }
+                        .pickerStyle(.menu)
+                        .frame(width: 112)
+                        .accessibilityIdentifier("directory-default-of")
+                        .help("「快速上传」时作为文件/图像的默认目录（每台机器每类至多一个）")
                         Button {
                             model.removeDirectory(directory.id, fromMachine: machine.wrappedValue.id)
                         } label: {

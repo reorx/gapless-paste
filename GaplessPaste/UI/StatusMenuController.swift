@@ -80,6 +80,14 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
                     syncItem.isEnabled = !appState.isBusy
                 }
                 menu.addItem(syncItem)
+                // M4：快速上传——按剪贴板类型直传该机器的默认目录，跳过选目录。
+                // 仅当机器配了至少一个默认目录（文件/图像）时才出现
+                if machine.defaultDirectory(for: .file) != nil || machine.defaultDirectory(for: .image) != nil {
+                    let quickItem = actionItem("⚡ 快速上传", #selector(quickUpload(_:)))
+                    quickItem.representedObject = machine
+                    quickItem.isEnabled = !appState.isBusy
+                    menu.addItem(quickItem)
+                }
                 for directory in machine.directories {
                     let item = actionItem("📁 \(directory.name)", #selector(uploadToTarget(_:)))
                     item.representedObject = UploadTarget(machine: machine, directory: directory)
@@ -121,6 +129,11 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     @objc private func syncClipboard(_ sender: NSMenuItem) {
         guard let machine = sender.representedObject as? Machine else { return }
         appState.syncClipboard(machine: machine)
+    }
+
+    @objc private func quickUpload(_ sender: NSMenuItem) {
+        guard let machine = sender.representedObject as? Machine else { return }
+        appState.quickUpload(machine: machine)
     }
 
     @objc private func copyLastPaths() {

@@ -123,3 +123,128 @@ struct ConfigSerializationTests {
         #expect(config.machines[0].directories[0].path == "~/inbox2")
     }
 }
+
+@Suite("配置模型：默认目录角色 default_of")
+struct DirectoryRoleTests {
+    @Test("解析 default_of = FILE / IMAGE")
+    func parseRoles() throws {
+        let json = """
+        {
+          "machines": [
+            {
+              "name": "mini", "sshAlias": "mini",
+              "directories": [
+                { "name": "inbox", "path": "~/in", "default_of": "FILE" },
+                { "name": "shots", "path": "~/shots", "default_of": "IMAGE" }
+              ]
+            }
+          ]
+        }
+        """
+        let dirs = try Config.parse(Data(json.utf8)).machines[0].directories
+        #expect(dirs[0].defaultOf == .file)
+        #expect(dirs[1].defaultOf == .image)
+    }
+
+    @Test("缺省 default_of → nil（普通目录）")
+    func missingRoleIsNil() throws {
+        let json = #"{"machines":[{"name":"m","sshAlias":"m","directories":[{"name":"d","path":"/x"}]}]}"#
+        let config = try Config.parse(Data(json.utf8))
+        #expect(config.machines[0].directories[0].defaultOf == nil)
+    }
+
+    @Test("非法 default_of 值 → 解析失败")
+    func invalidRoleThrows() {
+        let json = #"{"machines":[{"name":"m","sshAlias":"m","directories":[{"name":"d","path":"/x","default_of":"VIDEO"}]}]}"#
+        #expect(throws: (any Error).self) {
+            try Config.parse(Data(json.utf8))
+        }
+    }
+
+    @Test("同一机器两个 FILE 默认 → 校验失败")
+    func duplicateFileDefaultFails() {
+        let json = """
+        {"machines":[{"name":"m","sshAlias":"m","directories":[
+          {"name":"a","path":"/a","default_of":"FILE"},
+          {"name":"b","path":"/b","default_of":"FILE"}
+        ]}]}
+        """
+        #expect(throws: ConfigError.self) {
+            try Config.parse(Data(json.utf8))
+        }
+    }
+
+    @Test("同一机器两个 IMAGE 默认 → 校验失败")
+    func duplicateImageDefaultFails() {
+        let json = """
+        {"machines":[{"name":"m","sshAlias":"m","directories":[
+          {"name":"a","path":"/a","default_of":"IMAGE"},
+          {"name":"b","path":"/b","default_of":"IMAGE"}
+        ]}]}
+        """
+        #expect(throws: ConfigError.self) {
+            try Config.parse(Data(json.utf8))
+        }
+    }
+
+    @Test("同机器 FILE + IMAGE 各一 + 普通目录 → 合法")
+    func oneEachIsValid() throws {
+        let json = """
+        {"machines":[{"name":"m","sshAlias":"m","directories":[
+          {"name":"a","path":"/a","default_of":"FILE"},
+          {"name":"b","path":"/b","default_of":"IMAGE"},
+          {"name":"c","path":"/c"}
+        ]}]}
+        """
+        let config = try Config.parse(Data(json.utf8))
+        #expect(config.machines[0].directories.count == 3)
+    }
+
+    @Test("不同机器可各自拥有 FILE 默认（唯一性仅限每台机器内）")
+    func perMachineScope() throws {
+        let json = """
+        {"machines":[
+          {"name":"m1","sshAlias":"m1","directories":[{"name":"a","path":"/a","default_of":"FILE"}]},
+          {"name":"m2","sshAlias":"m2","directories":[{"name":"b","path":"/b","default_of":"FILE"}]}
+        ]}
+        """
+        let config = try Config.parse(Data(json.utf8))
+        #expect(config.machines.count == 2)
+    }
+
+    @Test("defaultDirectory(for:) 返回该机器对应角色目录，无则 nil")
+    func lookupHelper() {
+        let machine = Machine(name: "m", sshAlias: "m", directories: [
+            RemoteDirectory(name: "a", path: "/a", defaultOf: .file),
+            RemoteDirectory(name: "b", path: "/b"),
+        ])
+        #expect(machine.defaultDirectory(for: .file)?.name == "a")
+        #expect(machine.defaultDirectory(for: .image) == nil)
+    }
+
+    @Test("serialize 往返保留 default_of，普通目录不写该键")
+    func roundTripAndOmitNil() throws {
+        let config = Config(machines: [
+            Machine(name: "m", sshAlias: "m", directories: [
+                RemoteDirectory(name: "a", path: "/a", defaultOf: .image),
+                RemoteDirectory(name: "b", path: "/b"),
+            ]),
+        ])
+        let data = try config.serialize()
+        let text = String(decoding: data, as: UTF8.self)
+        #expect(text.contains("default_of"))
+        #expect(text.contains("IMAGE"))
+        // 只有目录 a 携带 default_of，普通目录 b 不产出该键
+        #expect(text.components(separatedBy: "default_of").count - 1 == 1)
+        let parsed = try Config.parse(data)
+        #expect(parsed == config)
+        #expect(parsed.machines[0].directories[1].defaultOf == nil)
+    }
+
+    @Test("首启模板：inbox=FILE，screenshots=IMAGE")
+    func templateRoles() throws {
+        let dirs = try Config.parse(Data(Config.templateJSON.utf8)).machines[0].directories
+        #expect(dirs.first { $0.name == "inbox" }?.defaultOf == .file)
+        #expect(dirs.first { $0.name == "screenshots" }?.defaultOf == .image)
+    }
+}

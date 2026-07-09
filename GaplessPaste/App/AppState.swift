@@ -85,6 +85,40 @@ final class AppState {
         Task { await prepareAndSync(machine: machine) }
     }
 
+    /// 快速上传（M4）：读剪贴板 → 按内容类型选该机器对应角色的默认目录 → 委托 upload 走完整流程。
+    /// 文件引用 → .file 默认目录；图像 → .image 默认目录（仍弹重命名浮窗）；
+    /// 纯文本引导去「同步剪贴板」、空剪贴板与未配置默认目录均以通知提示。
+    func quickUpload(machine: Machine) {
+        guard !isBusy else { return }
+        let snapshot = pasteboard.snapshot()
+        let content = PasteboardClassifier.classify(
+            fileURLs: snapshot.fileURLs,
+            imagePNGData: snapshot.imagePNGData,
+            text: snapshot.text
+        )
+        log.info("触发快速上传 → \(machine.name)，剪贴板分类：\(describe(content))")
+        let role: DirectoryRole
+        switch content {
+        case .fileReferences:
+            role = .file
+        case .imageData:
+            role = .image
+        case .text:
+            notifier.notify(title: "GaplessPaste", body: "剪贴板是纯文本，请用「⇄ 同步剪贴板」")
+            return
+        case .empty:
+            notifier.notify(title: "GaplessPaste", body: TransferRejection.emptyClipboard.userMessage)
+            return
+        }
+        guard let directory = machine.defaultDirectory(for: role) else {
+            let label = role == .file ? "文件" : "图像"
+            notifier.notify(title: "GaplessPaste", body: "\(machine.name) 未配置\(label)默认目录，请在「设置…」里指定")
+            return
+        }
+        log.info("快速上传目标目录：\(machine.name)/\(directory.name)（\(role.rawValue) 默认）")
+        upload(machine: machine, directory: directory)
+    }
+
     /// 已探测机器的平台（nil = 尚未探测）。菜单据此对非 Darwin 机器禁用「同步剪贴板」；
     /// 未探测的保持可用，点击时探测、发现非 Darwin 则提示（spec：非 Darwin 降级/禁用）
     func remoteIsDarwinIfKnown(machine: Machine) -> Bool? {
