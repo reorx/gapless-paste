@@ -38,6 +38,8 @@ final class AppState {
 
     private(set) var isBusy = false
     private(set) var statusLine: String?
+    /// 上次操作（成功或失败）的完成时刻，菜单据此显示相对时间
+    private(set) var lastFinishedAt: Date?
     private(set) var lastRemotePaths: [String] = []
     private(set) var hasRetryableFailure = false
     private var retryAction: (() -> Void)?
@@ -301,10 +303,12 @@ final class AppState {
                     }
                 }
                 statusLine = "上次：✓ \(names) → \(machine.name)/\(directory.name)"
+                lastFinishedAt = Date()
                 log.info("上传成功：\n\(joinedPaths)")
                 notifier.notify(title: noteTitle, body: noteBody)
             } catch {
                 statusLine = "上次：✗ \(error.localizedDescription)"
+                lastFinishedAt = Date()
                 hasRetryableFailure = true
                 retryAction = { [weak self] in
                     self?.transfer(machine: machine, directory: directory, payload: payload)
@@ -370,16 +374,11 @@ final class AppState {
         )
         log.info("触发同步剪贴板 → \(machine.name)，剪贴板分类：\(describe(content))")
 
-        // 与平台无关的拒绝先行，空剪贴板/文件引用不必等 ssh 探测
-        switch content {
-        case .empty:
-            notifier.notify(title: "GaplessPaste", body: SyncRejection.emptyClipboard.userMessage)
+        // 与平台无关的拒绝先行（空剪贴板/非单个图片文件引用），不必等 ssh 探测
+        if let rejection = TransferPlanner.contentRejection(forSync: content) {
+            log.info("拒绝：\(rejection.userMessage)")
+            notifier.notify(title: "GaplessPaste", body: rejection.userMessage)
             return
-        case .fileReferences:
-            notifier.notify(title: "GaplessPaste", body: SyncRejection.fileReferencesNotSyncable.userMessage)
-            return
-        case .imageData, .text:
-            break
         }
         sync(machine: machine, content: content)
     }
@@ -404,10 +403,12 @@ final class AppState {
                 hasRetryableFailure = false
                 retryAction = nil
                 statusLine = "上次：✓ 剪贴板（\(summary)）→ \(machine.name)"
+                lastFinishedAt = Date()
                 log.info("同步剪贴板成功：\(summary) → \(machine.name)")
                 notifier.notify(title: "已同步剪贴板到 \(machine.name)", body: "\(summary)，远端 Ctrl+V / ⌘V 可用")
             } catch {
                 statusLine = "上次：✗ \(error.localizedDescription)"
+                lastFinishedAt = Date()
                 hasRetryableFailure = true
                 retryAction = { [weak self] in
                     self?.sync(machine: machine, content: content)
@@ -419,37 +420,21 @@ final class AppState {
     }
 
     /// 图像：写本地临时 PNG → scp 到固定远端临时路径（每次覆盖）→ osascript 注入；
+    /// 单个图片文件引用：读文件转 PNG 后走同一图像路径；
     /// 文本：直接 ssh pbcopy（stdin 传输）。返回通知用的内容摘要
     private func performSync(machine: Machine, probe: ProbeResult, content: ClassifiedContent) async throws -> String {
         let host = machine.sshAlias
         switch content {
         case .imageData(let png):
-            let localURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("GaplessPaste/clipboard-sync.png")
-            do {
-                try FileManager.default.createDirectory(at: localURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-                try png.write(to: localURL)
-            } catch {
-                throw AppError.imageWriteFailed
+            try await syncImage(png: png, host: host, probe: probe)
+            return "图像 \(DisplayFormatter.byteCountText(png.count))"
+        case .fileReferences(let urls):
+            // 单个图片文件（contentRejection 已保证），转 PNG 后与图像数据同路径
+            guard let url = urls.first, let png = PasteboardService.pngData(fromImageFile: url) else {
+                throw AppError.commandFailed(operation: "读取图片文件", detail: urls.first?.lastPathComponent ?? "")
             }
-
-            let tempDir = RemoteClipboard.syncTemporaryDirectory(probe: probe)
-            let tempPath = RemoteClipboard.syncTemporaryPath(probe: probe)
-            let mkdir = try await runner.run(commandBuilder.mkdirCommand(host: host, remoteDirectory: tempDir), timeout: 20)
-            guard mkdir.succeeded else {
-                throw AppError.commandFailed(operation: "创建远端临时目录", detail: mkdir.firstStderrLine)
-            }
-            let scp = try await runner.run(commandBuilder.scpCommand(localPath: localURL.path, host: host, remotePath: tempPath), timeout: 300)
-            guard scp.succeeded else {
-                throw AppError.commandFailed(operation: "上传剪贴板图像", detail: scp.firstStderrLine)
-            }
-            // 平台已在 syncPlan 分支确认为 Darwin，注入命令必然非 nil
-            let inject = RemoteClipboard.imageInjectionCommand(probe: probe, remoteImagePath: tempPath)!
-            let result = try await runner.run(commandBuilder.sshCommand(host: host, remoteCommand: inject), timeout: 20)
-            guard result.succeeded else {
-                throw AppError.commandFailed(operation: "注入远端剪贴板", detail: result.firstStderrLine)
-            }
-            return "图像 \(png.count) bytes"
+            try await syncImage(png: png, host: host, probe: probe)
+            return "图片文件 \(url.lastPathComponent)（\(DisplayFormatter.byteCountText(png.count))）"
         case .text(let text):
             let inject = RemoteClipboard.textInjectionCommand(probe: probe)!
             let result = try await runner.run(
@@ -461,8 +446,37 @@ final class AppState {
                 throw AppError.commandFailed(operation: "注入远端剪贴板", detail: result.firstStderrLine)
             }
             return "文本 \(text.count) 字符"
-        case .fileReferences, .empty:
+        case .empty:
             throw AppError.commandFailed(operation: "同步剪贴板", detail: "不支持的内容类型") // 已被前置拒绝，防御分支
+        }
+    }
+
+    /// 同步图像的公共路径：写本地临时 PNG → mkdir 远端临时目录 → scp 固定路径（每次覆盖）→ osascript 注入
+    private func syncImage(png: Data, host: String, probe: ProbeResult) async throws {
+        let localURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("GaplessPaste/clipboard-sync.png")
+        do {
+            try FileManager.default.createDirectory(at: localURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try png.write(to: localURL)
+        } catch {
+            throw AppError.imageWriteFailed
+        }
+
+        let tempDir = RemoteClipboard.syncTemporaryDirectory(probe: probe)
+        let tempPath = RemoteClipboard.syncTemporaryPath(probe: probe)
+        let mkdir = try await runner.run(commandBuilder.mkdirCommand(host: host, remoteDirectory: tempDir), timeout: 20)
+        guard mkdir.succeeded else {
+            throw AppError.commandFailed(operation: "创建远端临时目录", detail: mkdir.firstStderrLine)
+        }
+        let scp = try await runner.run(commandBuilder.scpCommand(localPath: localURL.path, host: host, remotePath: tempPath), timeout: 300)
+        guard scp.succeeded else {
+            throw AppError.commandFailed(operation: "上传剪贴板图像", detail: scp.firstStderrLine)
+        }
+        // 平台已在 syncPlan 分支确认为 Darwin，注入命令必然非 nil
+        let inject = RemoteClipboard.imageInjectionCommand(probe: probe, remoteImagePath: tempPath)!
+        let result = try await runner.run(commandBuilder.sshCommand(host: host, remoteCommand: inject), timeout: 20)
+        guard result.succeeded else {
+            throw AppError.commandFailed(operation: "注入远端剪贴板", detail: result.firstStderrLine)
         }
     }
 

@@ -43,4 +43,14 @@ struct PasteboardClassifierTests {
         let result = PasteboardClassifier.classify(fileURLs: [], imagePNGData: Data(), text: "fallback")
         #expect(result == .text("fallback"))
     }
+
+    @Test("图片文件判定：按扩展名（大小写不敏感），非图片/无扩展名为否")
+    func imageFileURLDetection() {
+        for name in ["a.png", "a.PNG", "a.jpg", "a.JPEG", "a.gif", "a.bmp", "a.tiff", "a.tif", "a.heic", "a.heif", "a.webp"] {
+            #expect(PasteboardClassifier.isImageFileURL(URL(fileURLWithPath: "/tmp/\(name)")), "\(name) 应判定为图片")
+        }
+        for name in ["a.pdf", "a.txt", "a", "a.png.zip", "a.svg"] {
+            #expect(!PasteboardClassifier.isImageFileURL(URL(fileURLWithPath: "/tmp/\(name)")), "\(name) 不应判定为图片")
+        }
+    }
 }

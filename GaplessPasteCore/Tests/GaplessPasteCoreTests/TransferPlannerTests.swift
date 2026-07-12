@@ -93,10 +93,45 @@ struct SyncPlannerTests {
         ]))
     }
 
-    @Test("文件引用不支持同步（提示改用目录上传）")
-    func fileReferencesRejected() {
-        let plan = TransferPlanner.syncPlan(for: .fileReferences([URL(fileURLWithPath: "/tmp/a")]), remoteIsDarwin: true)
-        #expect(plan == .rejected(.fileReferencesNotSyncable))
+    @Test("单个图片文件引用：读文件转 PNG 后走图像同步路径（Finder ⌘C 截图文件）")
+    func singleImageFileReferenceSyncPlan() {
+        let expected: SyncPlan = .steps([
+            .convertImageFileToTemporaryPNG,
+            .ensureRemoteTempDirectory,
+            .uploadToFixedTempPath,
+            .injectImageIntoRemoteClipboard,
+            .notifySuccess,
+        ])
+        for name in ["shot.png", "photo.JPG", "pic.jpeg", "x.heic", "y.webp", "z.tiff"] {
+            let plan = TransferPlanner.syncPlan(for: .fileReferences([URL(fileURLWithPath: "/tmp/\(name)")]), remoteIsDarwin: true)
+            #expect(plan == expected, "\(name) 应按图像同步")
+        }
+    }
+
+    @Test("非图片文件 / 多个文件引用不支持同步（提示改用目录上传）")
+    func nonImageOrMultipleFileReferencesRejected() {
+        let pdf = URL(fileURLWithPath: "/tmp/a.pdf")
+        let noExtension = URL(fileURLWithPath: "/tmp/a")
+        let pngA = URL(fileURLWithPath: "/tmp/a.png")
+        let pngB = URL(fileURLWithPath: "/tmp/b.png")
+        #expect(TransferPlanner.syncPlan(for: .fileReferences([pdf]), remoteIsDarwin: true) == .rejected(.fileReferencesNotSyncable))
+        #expect(TransferPlanner.syncPlan(for: .fileReferences([noExtension]), remoteIsDarwin: true) == .rejected(.fileReferencesNotSyncable))
+        #expect(TransferPlanner.syncPlan(for: .fileReferences([pngA, pngB]), remoteIsDarwin: true) == .rejected(.fileReferencesNotSyncable))
+    }
+
+    @Test("图片文件引用 + 非 Darwin 远端：拒绝注入")
+    func imageFileReferenceNonDarwinRejected() {
+        let plan = TransferPlanner.syncPlan(for: .fileReferences([URL(fileURLWithPath: "/tmp/a.png")]), remoteIsDarwin: false)
+        #expect(plan == .rejected(.remoteClipboardUnsupported))
+    }
+
+    @Test("平台无关的内容拒绝判定（app 在 ssh 探测前先行调用）")
+    func contentRejectionBeforeProbe() {
+        #expect(TransferPlanner.contentRejection(forSync: .empty) == .emptyClipboard)
+        #expect(TransferPlanner.contentRejection(forSync: .fileReferences([URL(fileURLWithPath: "/tmp/a.pdf")])) == .fileReferencesNotSyncable)
+        #expect(TransferPlanner.contentRejection(forSync: .fileReferences([URL(fileURLWithPath: "/tmp/a.png")])) == nil)
+        #expect(TransferPlanner.contentRejection(forSync: .imageData(Data([1]))) == nil)
+        #expect(TransferPlanner.contentRejection(forSync: .text("hi")) == nil)
     }
 
     @Test("空剪贴板拒绝")

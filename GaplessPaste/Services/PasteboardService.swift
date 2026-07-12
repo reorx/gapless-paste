@@ -36,6 +36,15 @@ final class PasteboardService {
         return nil
     }
 
+    /// 图片文件 → PNG 数据（「同步剪贴板」的文件引用路径用）：
+    /// PNG 原样读出不转码，其余格式（jpg/heic/webp…）经 ImageIO 解码后转 PNG
+    nonisolated static func pngData(fromImageFile url: URL) -> Data? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        if url.pathExtension.lowercased() == "png" { return data }
+        guard let rep = NSBitmapImageRep(data: data) else { return nil }
+        return rep.representation(using: .png, properties: [:])
+    }
+
     func writeText(_ string: String) {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()

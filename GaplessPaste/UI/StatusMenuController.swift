@@ -43,9 +43,13 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     private func rebuild(_ menu: NSMenu) {
         menu.removeAllItems()
 
-        // 状态行：进行中/上次结果（禁用项）
+        // 状态行：进行中/上次结果（禁用项）；上次结果下附相对时间
+        // （菜单每次打开经 menuNeedsUpdate 重建，时间随开随算，无需定时刷新）
         if let status = appState.statusLine {
             menu.addItem(disabledItem(status))
+            if status.hasPrefix("上次"), let finishedAt = appState.lastFinishedAt {
+                menu.addItem(disabledItem("　\(DisplayFormatter.relativeTimeText(from: finishedAt))", small: true))
+            }
         }
 
         let copyItem = actionItem("拷贝上次上传的远端路径", #selector(copyLastPaths))
@@ -107,9 +111,15 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(quitItem)
     }
 
-    private func disabledItem(_ title: String) -> NSMenuItem {
+    private func disabledItem(_ title: String, small: Bool = false) -> NSMenuItem {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
+        if small {
+            item.attributedTitle = NSAttributedString(
+                string: title,
+                attributes: [.font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize)]
+            )
+        }
         return item
     }
 

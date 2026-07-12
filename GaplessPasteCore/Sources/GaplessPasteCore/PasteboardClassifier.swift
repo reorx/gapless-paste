@@ -12,6 +12,16 @@ public enum ClassifiedContent: Equatable, Sendable {
 }
 
 public enum PasteboardClassifier {
+    /// 可按图像同步到远端剪贴板的文件扩展名（ImageIO 可解码、能转成 PNG 的常见格式）
+    public static let imageFileExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "gif", "bmp", "tiff", "tif", "heic", "heif", "webp",
+    ]
+
+    /// 按扩展名（大小写不敏感）判定文件引用是否为图片文件
+    public static func isImageFileURL(_ url: URL) -> Bool {
+        imageFileExtensions.contains(url.pathExtension.lowercased())
+    }
+
     public static func classify(fileURLs: [URL], imagePNGData: Data?, text: String?) -> ClassifiedContent {
         if !fileURLs.isEmpty {
             return .fileReferences(fileURLs)

@@ -39,6 +39,7 @@ public enum TransferPlan: Equatable, Sendable {
 
 public enum SyncStep: Equatable, Sendable {
     case writeImageToTemporaryFile
+    case convertImageFileToTemporaryPNG
     case ensureRemoteTempDirectory
     case uploadToFixedTempPath
     case injectImageIntoRemoteClipboard
@@ -56,7 +57,7 @@ public enum SyncRejection: Equatable, Sendable {
         case .emptyClipboard:
             return "剪贴板没有可同步的内容"
         case .fileReferencesNotSyncable:
-            return "文件引用不支持同步剪贴板，请改用目录上传"
+            return "只有单个图片文件支持同步剪贴板，其余请改用目录上传"
         case .remoteClipboardUnsupported:
             return "远端不是 macOS，不支持剪贴板注入"
         }
@@ -106,15 +107,40 @@ public enum TransferPlanner {
         }
     }
 
+    /// 与平台无关的同步内容拒绝判定（app 在 ssh 探测前先行调用）；nil = 内容可同步。
+    /// 文件引用仅支持单个图片文件（读文件转 PNG 后走图像路径），其余仍走目录上传
+    public static func contentRejection(forSync content: ClassifiedContent) -> SyncRejection? {
+        switch content {
+        case .empty:
+            return .emptyClipboard
+        case .fileReferences(let urls):
+            guard urls.count == 1, PasteboardClassifier.isImageFileURL(urls[0]) else {
+                return .fileReferencesNotSyncable
+            }
+            return nil
+        case .imageData, .text:
+            return nil
+        }
+    }
+
     /// 「⇄ 同步剪贴板」：最快路径，无重命名浮窗、无目录选择
     public static func syncPlan(for content: ClassifiedContent, remoteIsDarwin: Bool) -> SyncPlan {
+        if let rejection = contentRejection(forSync: content) {
+            return .rejected(rejection)
+        }
         guard remoteIsDarwin else {
-            if case .empty = content { return .rejected(.emptyClipboard) }
             return .rejected(.remoteClipboardUnsupported)
         }
         switch content {
         case .fileReferences:
-            return .rejected(.fileReferencesNotSyncable)
+            // 单个图片文件（contentRejection 已保证）：读文件转 PNG，其后与图像数据同路径
+            return .steps([
+                .convertImageFileToTemporaryPNG,
+                .ensureRemoteTempDirectory,
+                .uploadToFixedTempPath,
+                .injectImageIntoRemoteClipboard,
+                .notifySuccess,
+            ])
         case .imageData:
             // 图像走固定远端临时路径（每次覆盖），再注入远端剪贴板
             return .steps([
