@@ -1,22 +1,19 @@
-name: test
+name: build app
 
 on:
   push:
-    branches: [master, main]
-  pull_request:
+    tags: ['v*']
+
+permissions:
+  contents: write
 
 jobs:
-  core-tests:
+  build:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Run GaplessPasteCore tests
         run: cd GaplessPasteCore && swift test
-
-  app-build:
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v4
       - name: Install tools
         run: brew install xcodegen xcbeautify
       - name: Generate project
@@ -25,6 +22,16 @@ jobs:
         run: |
           set -o pipefail
           xcodebuild -project GaplessPaste.xcodeproj -scheme GaplessPaste \
-            -configuration Debug -destination 'platform=macOS' \
+            -configuration Release -destination 'platform=macOS' \
             -derivedDataPath .build/DerivedData \
             CODE_SIGNING_ALLOWED=NO build | xcbeautify
+      - name: Package app
+        run: |
+          ditto -c -k --keepParent \
+            .build/DerivedData/Build/Products/Release/GaplessPaste.app \
+            "GaplessPaste-${GITHUB_REF_NAME}.zip"
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: GaplessPaste-${{ github.ref_name }}.zip
+          generate_release_notes: true

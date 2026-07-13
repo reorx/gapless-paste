@@ -53,10 +53,7 @@ make clean       # 清理构建产物与生成的 xcodeproj
 
 ## CI
 
-`.github/workflows/test.yml`，push/PR 触发，两个 job：
-
-1. `core-tests`：`cd GaplessPasteCore && swift test`
-2. `app-build`：xcodegen + 无签名 xcodebuild（`CODE_SIGNING_ALLOWED=NO`），验证 project.yml 与 app target 始终可编译
+`.github/workflows/build.yml`（name: build app），仅在 push `v*` tag 时触发，单 job 顺序执行：Core 单测 → xcodegen → 无签名 Release 构建（`CODE_SIGNING_ALLOWED=NO`）→ `ditto` 打包为 `GaplessPaste-<tag>.zip` → `softprops/action-gh-release` 自动创建 release 并上传 zip（附自动生成的 release notes）
 
 ## 配置与设置界面
 
