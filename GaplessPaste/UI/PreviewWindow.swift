@@ -52,8 +52,14 @@ final class PreviewWindowModel: ObservableObject {
     }
     /// 预览缓存：key = 远端路径。窗口存续期间不失效，切回已看过的文件瞬时加载
     @Published private(set) var previews: [String: PreviewState] = [:]
+    /// 已下载到本地缓存的文件：key = 远端路径。复制/下载按钮由此取本地文件
+    /// （二进制文件不可预览但同样已下载，可复制/下载）
+    @Published private(set) var downloadedFiles: [String: URL] = [:]
+    /// 复制/下载动作的短暂反馈（顶栏展示，3s 自动消失）
+    @Published private(set) var actionFeedback: String?
 
     var onPinChange: ((Bool) -> Void)?
+    private var feedbackTask: Task<Void, Never>?
 
     private let runner: SSHRunner
     private let builder: SSHCommandBuilder
@@ -106,6 +112,7 @@ final class PreviewWindowModel: ObservableObject {
     func refresh() {
         selection = []
         previews = [:]
+        downloadedFiles = [:]
         nodesByPath = [:]
         try? FileManager.default.removeItem(at: cacheDirectory)
         start()
@@ -164,8 +171,11 @@ final class PreviewWindowModel: ObservableObject {
     private func downloadAndPreview(_ node: PreviewNode) {
         Task {
             do {
-                try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
-                let localURL = cacheDirectory.appendingPathComponent("\(UUID().uuidString)-\(node.name)")
+                // 每个文件独占一个 UUID 子目录、保留原始文件名：
+                // 复制到剪贴板 / 下载另存时拿到的就是原名文件
+                let directory = cacheDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+                let localURL = directory.appendingPathComponent(node.name)
                 let result = try await runner.run(
                     builder.scpDownloadCommand(host: machine.sshAlias, remotePath: node.id, localPath: localURL.path),
                     timeout: 120
@@ -175,10 +185,67 @@ final class PreviewWindowModel: ObservableObject {
                     return
                 }
                 let data = try Data(contentsOf: localURL)
+                downloadedFiles[node.id] = localURL
                 previews[node.id] = Self.makePreview(fileName: node.name, data: data)
             } catch {
                 previews[node.id] = .failed(error.localizedDescription)
             }
+        }
+    }
+
+    // MARK: - 复制 / 下载
+
+    /// ⌘C：把选中的、已下载完成的文件以文件引用写入本地剪贴板（Finder ⌘V 可粘贴出文件）
+    func copySelectedFiles() {
+        copyFiles(selectedFiles)
+    }
+
+    func copyFiles(_ nodes: [PreviewNode]) {
+        let urls = nodes.compactMap { downloadedFiles[$0.id] }
+        guard !urls.isEmpty else {
+            showFeedback("文件尚未下载完成")
+            return
+        }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects(urls as [NSURL])
+        log.info("预览窗口：已复制 \(urls.count) 个文件引用到本地剪贴板")
+        showFeedback(urls.count == 1 ? "已复制 \(nodes[0].name)" : "已复制 \(urls.count) 个文件")
+    }
+
+    /// 下载按钮：NSSavePanel 选位置，把缓存文件拷贝过去（无需重新走 scp）
+    func saveFile(_ node: PreviewNode) {
+        guard let localURL = downloadedFiles[node.id] else { return }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = node.name
+        panel.canCreateDirectories = true
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        do {
+            // savePanel 已向用户确认过覆盖，这里直接替换
+            if FileManager.default.fileExists(atPath: destination.path) {
+                try FileManager.default.removeItem(at: destination)
+            }
+            try FileManager.default.copyItem(at: localURL, to: destination)
+            log.info("预览窗口：\(node.id) 已另存到 \(destination.path)")
+            showFeedback("已下载到 \(destination.path)")
+        } catch {
+            showFeedback("下载失败：\(error.localizedDescription)")
+        }
+    }
+
+    /// 该文件是否已在本地缓存（复制/下载按钮的可用条件）
+    func canExport(_ node: PreviewNode) -> Bool {
+        downloadedFiles[node.id] != nil
+    }
+
+    private func showFeedback(_ message: String) {
+        actionFeedback = message
+        feedbackTask?.cancel()
+        feedbackTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            self?.actionFeedback = nil
         }
     }
 
@@ -216,6 +283,16 @@ struct PreviewWindowView: View {
         }
         .frame(minWidth: 640, minHeight: 400)
         .onChange(of: model.selection) { model.ensurePreviews() }
+        .background {
+            // 复制快捷键：⌘C（macOS 惯例）与 ⌃C 都接住，把选中文件以文件引用写入剪贴板。
+            // 隐藏按钮承载 keyboardShortcut，会先于文本选区的 copy 响应
+            Button("") { model.copySelectedFiles() }
+                .keyboardShortcut("c", modifiers: .command)
+                .hidden()
+            Button("") { model.copySelectedFiles() }
+                .keyboardShortcut("c", modifiers: .control)
+                .hidden()
+        }
     }
 
     private var topBar: some View {
@@ -225,6 +302,13 @@ struct PreviewWindowView: View {
                 .truncationMode(.middle)
                 .foregroundStyle(.secondary)
             Spacer()
+            if let feedback = model.actionFeedback {
+                Text(feedback)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+            }
             Button {
                 model.refresh()
             } label: {
@@ -299,8 +383,14 @@ struct PreviewWindowView: View {
         } else {
             HStack(spacing: 0) {
                 ForEach(files) { file in
-                    PreviewPane(node: file, state: model.previews[file.id] ?? .loading)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    PreviewPane(
+                        node: file,
+                        state: model.previews[file.id] ?? .loading,
+                        canExport: model.canExport(file),
+                        onCopy: { model.copyFiles([file]) },
+                        onSave: { model.saveFile(file) }
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     if file.id != files.last?.id {
                         Divider()
                     }
@@ -352,23 +442,83 @@ private struct PreviewNodeRow: View {
     }
 }
 
-/// 单个文件的预览栏：文件名标题 + 按状态渲染（加载中/图像/文本/二进制/失败）
+/// 单个文件的预览栏：标题栏（文件名 + 操作按钮组）+ 按状态渲染（加载中/图像/文本/二进制/失败）。
+/// 图像预览支持缩放：标题栏 −/百分比/＋，内容区 pinch 手势；百分比点击还原 100%
 private struct PreviewPane: View {
     let node: PreviewNode
     let state: PreviewWindowModel.PreviewState
+    let canExport: Bool
+    let onCopy: () -> Void
+    let onSave: () -> Void
+
+    /// 图像缩放倍率（1 = 原始尺寸）。@State 随 ForEach 里的文件 id 保持，切换选中不串
+    @State private var zoom: CGFloat = 1
+    /// pinch 手势起点倍率（手势值是相对起点的比例）
+    @State private var pinchBaseZoom: CGFloat?
+
+    private static let zoomRange: ClosedRange<CGFloat> = 0.1...8
 
     var body: some View {
         VStack(spacing: 0) {
+            header
+            Divider()
+            content
+        }
+    }
+
+    private var isImage: Bool {
+        if case .image = state { return true }
+        return false
+    }
+
+    private var header: some View {
+        HStack(spacing: 6) {
             Text(node.name)
                 .font(.callout.weight(.medium))
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 5)
-                .background(.quaternary.opacity(0.5))
-            Divider()
-            content
+            Spacer(minLength: 8)
+            if isImage {
+                Button { setZoom(zoom / 1.25) } label: {
+                    Image(systemName: "minus.magnifyingglass")
+                }
+                .accessibilityIdentifier("preview-zoom-out")
+                .help("缩小")
+                Button { setZoom(1) } label: {
+                    Text("\(Int((zoom * 100).rounded()))%")
+                        .font(.caption.monospacedDigit())
+                        .frame(minWidth: 36)
+                }
+                .accessibilityIdentifier("preview-zoom-reset")
+                .help("还原 100%")
+                Button { setZoom(zoom * 1.25) } label: {
+                    Image(systemName: "plus.magnifyingglass")
+                }
+                .accessibilityIdentifier("preview-zoom-in")
+                .help("放大")
+                Divider().frame(height: 12)
+            }
+            Button(action: onCopy) {
+                Image(systemName: "doc.on.doc")
+            }
+            .accessibilityIdentifier("preview-copy")
+            .disabled(!canExport)
+            .help("复制文件到剪贴板（⌘C 复制所有选中文件）")
+            Button(action: onSave) {
+                Image(systemName: "square.and.arrow.down")
+            }
+            .accessibilityIdentifier("preview-save")
+            .disabled(!canExport)
+            .help("下载到本地…")
         }
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(.quaternary.opacity(0.5))
+    }
+
+    private func setZoom(_ value: CGFloat) {
+        zoom = min(Self.zoomRange.upperBound, max(Self.zoomRange.lowerBound, value))
     }
 
     @ViewBuilder
@@ -384,13 +534,21 @@ private struct PreviewPane: View {
             ScrollView([.horizontal, .vertical]) {
                 Image(nsImage: image)
                     .resizable()
-                    .scaledToFit()
                     .frame(
-                        maxWidth: max(image.size.width, 1),
-                        maxHeight: max(image.size.height, 1)
+                        width: max(image.size.width, 1) * zoom,
+                        height: max(image.size.height, 1) * zoom
                     )
                     .padding(8)
             }
+            .gesture(
+                MagnifyGesture()
+                    .onChanged { value in
+                        let base = pinchBaseZoom ?? zoom
+                        pinchBaseZoom = base
+                        setZoom(base * value.magnification)
+                    }
+                    .onEnded { _ in pinchBaseZoom = nil }
+            )
         case .text(let text, let truncated):
             VStack(spacing: 0) {
                 if truncated {

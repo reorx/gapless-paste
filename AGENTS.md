@@ -8,6 +8,7 @@ macOS 菜单栏工具：把本机剪贴板里的截图/文件/文本以最少步
 - 快速上传 ✅：目录可标 `default_of`（FILE/IMAGE），菜单「⚡ 快速上传」按剪贴板类型直传默认目录（每机器内唯一）
 - 同步剪贴板支持单个图片文件引用 ✅：Finder ⌘C 的图片文件（png/jpg/heic/webp 等）读文件转 PNG 后走图像同步路径注入远端剪贴板；多文件/非图片仍拒绝
 - 预览远端目录 ✅：每机器菜单「🔍 预览远端目录…」（同步剪贴板下方）→ 输入路径开独立预览窗口（可多开）：左树（`ls -1Ap` 懒加载）右预览（文本/图像，二进制拒绝），每窗口内存缓存（切回瞬时）、⌘ 多选分栏对比、pin 置顶；纯逻辑在 Core `RemoteBrowse.swift`，UI 在 `UI/PreviewWindow.swift`
+- 预览窗口导出与缩放 ✅：⌘C/⌃C 复制选中文件（文件引用，Finder 可粘贴）；分栏标题栏右侧按钮组——图像的 −/百分比/＋ 缩放（pinch 手势同步支持，百分比点击还原 100%）+ 复制 + 下载（NSSavePanel 另存，二进制文件同样可导出）；缓存以 `<UUID>/<原文件名>` 存放保证导出保留原名
 - M4 待做：全局热键、登录启动项、浏览器拖图评估
 - 历次改动细节见 `kb/sessions/`
 
@@ -81,10 +82,12 @@ make clean       # 清理构建产物与生成的 xcodeproj
 - 状态栏菜单路径：LSUIElement app 的 status item 是 `menu bar item 1 of menu bar 2 of process "GaplessPaste"`，click 展开后再 click 里面的 menu item；读菜单项标题（`name of every menu item`）可无截图验证菜单状态，`key code 53`（Esc）收起菜单
 - 操作前 `set frontmost to true`（LSUIElement app 不会自己在前台）
 
-**两个必踩的坑（都已验证）**
+**必踩的坑（都已验证）**
 
 - SwiftUI TextField 直接 `set value of text field`（AXValue）只改显示、**不触发 binding**，数据不会真正变化——必须发真实键盘事件
 - 中文输入法会把 `keystroke` 的字母吞进组合缓冲（只有 `-` 等符号直通）——填文本一律走剪贴板：`set the clipboard to`… 后 `⌘A` + `⌘V`；操作前 `pbpaste` 备份用户剪贴板，结束后恢复
+- NSSavePanel/NSOpenPanel 是 XPC 远程渲染（openAndSavePanelService）：app 进程里的 AX 元素只是代理，`click`/`AXPress`/`set value` 全部静默无效，app 自截图也是黑的——**只能纯键盘驱动**：AXRaise 面板窗口后 `⌘⇧G` → `⌘A`+`⌘V`（路径先放剪贴板）→ 回车（确认前往）→ 回车（默认按钮存储）；每步间留足 delay
+- SwiftUI List 行选中：对 row 元素 `set selected to true` 有效（`AXPress` 行内 static text 无效）；点自定义按钮用 `perform action "AXPress"`（`click` 按坐标点，面板/布局动过后会点偏）
 
 **验收闭环**
 
