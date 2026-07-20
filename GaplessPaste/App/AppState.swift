@@ -36,6 +36,9 @@ final class AppState {
         openConfigFile: { [weak self] in self?.openConfig() }
     )
 
+    /// 打开中的预览窗口（可多开），关窗时自移除
+    private var previewControllers: [PreviewWindowController] = []
+
     private(set) var isBusy = false
     private(set) var statusLine: String?
     /// 上次操作（成功或失败）的完成时刻，菜单据此显示相对时间
@@ -125,6 +128,35 @@ final class AppState {
     /// 未探测的保持可用，点击时探测、发现非 Darwin 则提示（spec：非 Darwin 降级/禁用）
     func remoteIsDarwinIfKnown(machine: Machine) -> Bool? {
         probeService.cached(machine.sshAlias)?.isDarwin
+    }
+
+    /// 预览远端目录：弹输入框要路径 → 开独立预览窗口（可多开，各自缓存）
+    func previewFolder(machine: Machine) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "预览远端目录"
+        alert.informativeText = "输入 \(machine.name) 上的目录路径（支持 ~/ 前缀）"
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        field.stringValue = "~/"
+        field.placeholderString = "~/claude-inbox"
+        field.setAccessibilityIdentifier("preview-path-field")
+        alert.accessoryView = field
+        alert.addButton(withTitle: "打开预览")
+        alert.addButton(withTitle: "取消")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let path = field.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !path.isEmpty else { return }
+
+        let controller = PreviewWindowController(
+            machine: machine, path: path,
+            runner: runner, builder: commandBuilder, probeService: probeService, log: log
+        )
+        controller.onClose = { [weak self, weak controller] in
+            self?.previewControllers.removeAll { $0 === controller }
+        }
+        previewControllers.append(controller)
+        controller.show()
     }
 
     func copyLastRemotePaths() {

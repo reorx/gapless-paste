@@ -84,6 +84,10 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
                     syncItem.isEnabled = !appState.isBusy
                 }
                 menu.addItem(syncItem)
+                // 预览远端目录：独立于上传管线（不受 isBusy 限制），窗口可多开
+                let previewItem = actionItem("🔍 预览远端目录…", #selector(previewFolder(_:)))
+                previewItem.representedObject = machine
+                menu.addItem(previewItem)
                 // M4：快速上传——按剪贴板类型直传该机器的默认目录，跳过选目录。
                 // 仅当机器配了至少一个默认目录（文件/图像）时才出现
                 if machine.defaultDirectory(for: .file) != nil || machine.defaultDirectory(for: .image) != nil {
@@ -139,6 +143,11 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     @objc private func syncClipboard(_ sender: NSMenuItem) {
         guard let machine = sender.representedObject as? Machine else { return }
         appState.syncClipboard(machine: machine)
+    }
+
+    @objc private func previewFolder(_ sender: NSMenuItem) {
+        guard let machine = sender.representedObject as? Machine else { return }
+        appState.previewFolder(machine: machine)
     }
 
     @objc private func quickUpload(_ sender: NSMenuItem) {
