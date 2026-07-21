@@ -57,6 +57,14 @@ final class PreviewWindowModel: ObservableObject {
     @Published private(set) var downloadedFiles: [String: URL] = [:]
     /// 复制/下载动作的短暂反馈（顶栏展示，3s 自动消失）
     @Published private(set) var actionFeedback: String?
+    /// 图像缩放倍率：key = 远端路径，缺省 = fit 模式（适应窗口，不放大超过原图）
+    @Published private(set) var imageZoom: [String: CGFloat] = [:]
+    /// 连接缩放：开启后任一图片的缩放操作同步到所有选中图片
+    @Published var zoomLinked = false
+    /// 连接滚动：开启后任一图片的滚动位置同步到其他分栏
+    @Published var scrollLinked = false
+    /// 连接滚动的最近一次用户滚动位置（归一化 0...1，x/y 各为可滚动范围的比例）
+    @Published var linkedScrollFraction: CGPoint?
 
     var onPinChange: ((Bool) -> Void)?
     private var feedbackTask: Task<Void, Never>?
@@ -113,6 +121,7 @@ final class PreviewWindowModel: ObservableObject {
         selection = []
         previews = [:]
         downloadedFiles = [:]
+        imageZoom = [:]
         nodesByPath = [:]
         try? FileManager.default.removeItem(at: cacheDirectory)
         start()
@@ -158,6 +167,29 @@ final class PreviewWindowModel: ObservableObject {
             .compactMap { nodesByPath[$0] }
             .filter { !$0.isDirectory }
             .sorted { $0.id < $1.id }
+    }
+
+    /// 当前选中且已成功以图像预览的文件路径（连接缩放的同步目标）
+    var selectedImagePaths: [String] {
+        selectedFiles.map(\.id).filter {
+            if case .image = previews[$0] { return true }
+            return false
+        }
+    }
+
+    /// 当前缩放倍率；nil = fit 模式
+    func zoom(for path: String) -> CGFloat? {
+        imageZoom[path]
+    }
+
+    /// 设置缩放（nil = 回到 fit）。连接缩放开启时同步到所有选中图片
+    func setZoom(_ value: CGFloat?, for path: String) {
+        let clamped = value.map { CGFloat(PreviewZoom.clamp(Double($0))) }
+        var targets = zoomLinked ? selectedImagePaths : [path]
+        if !targets.contains(path) { targets.append(path) }
+        for target in targets {
+            imageZoom[target] = clamped
+        }
     }
 
     /// 选中变化时为尚无缓存的文件启动下载；已缓存的瞬时命中
@@ -270,13 +302,18 @@ final class PreviewWindowModel: ObservableObject {
 struct PreviewWindowView: View {
     @ObservedObject var model: PreviewWindowModel
 
+    /// 侧栏宽度只由用户拖动分割条改变（HSplitView 会在右侧内容变化时重排导致宽度跳变，故自绘分割条）
+    @State private var sidebarWidth: CGFloat = 240
+    @State private var sidebarDragBaseWidth: CGFloat?
+
     var body: some View {
         VStack(spacing: 0) {
             topBar
             Divider()
-            HSplitView {
+            HStack(spacing: 0) {
                 sidebar
-                    .frame(minWidth: 180, idealWidth: 240, maxWidth: 400)
+                    .frame(width: sidebarWidth)
+                splitter
                 previewArea
                     .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -295,6 +332,31 @@ struct PreviewWindowView: View {
         }
     }
 
+    /// 分割条：1pt 分隔线 + 9pt 隐形拖动热区，拖动只改 sidebarWidth，布局重排不会影响它
+    private var splitter: some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor))
+            .frame(width: 1)
+            .frame(maxHeight: .infinity)
+            .overlay {
+                Color.clear
+                    .frame(width: 9)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                            .onChanged { value in
+                                let base = sidebarDragBaseWidth ?? sidebarWidth
+                                sidebarDragBaseWidth = base
+                                sidebarWidth = min(500, max(160, base + value.translation.width))
+                            }
+                            .onEnded { _ in sidebarDragBaseWidth = nil }
+                    )
+                    .onHover { inside in
+                        if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                    }
+            }
+    }
+
     private var topBar: some View {
         HStack(spacing: 8) {
             Label("\(model.machine.name) : \(model.root?.id ?? model.requestedPath)", systemImage: "folder.badge.gearshape")
@@ -308,6 +370,24 @@ struct PreviewWindowView: View {
                     .truncationMode(.middle)
                     .foregroundStyle(.secondary)
                     .font(.callout)
+            }
+            if model.selectedImagePaths.count >= 2 {
+                Button {
+                    model.zoomLinked.toggle()
+                } label: {
+                    Label("连接 Zoom", systemImage: model.zoomLinked ? "link.circle.fill" : "link")
+                }
+                .foregroundStyle(model.zoomLinked ? Color.accentColor : Color.primary)
+                .accessibilityIdentifier("preview-zoom-link")
+                .help(model.zoomLinked ? "断开连接缩放" : "连接缩放：任一图片缩放时其他图片同步")
+                Button {
+                    model.scrollLinked.toggle()
+                } label: {
+                    Label("连接 Scroll", systemImage: "arrow.up.and.down.and.arrow.left.and.right")
+                }
+                .foregroundStyle(model.scrollLinked ? Color.accentColor : Color.primary)
+                .accessibilityIdentifier("preview-scroll-link")
+                .help(model.scrollLinked ? "断开连接滚动" : "连接滚动：任一图片滚动时其他图片同步位置")
             }
             Button {
                 model.refresh()
@@ -387,6 +467,13 @@ struct PreviewWindowView: View {
                         node: file,
                         state: model.previews[file.id] ?? .loading,
                         canExport: model.canExport(file),
+                        zoom: model.zoom(for: file.id),
+                        onZoomChange: { model.setZoom($0, for: file.id) },
+                        scrollSync: model.scrollLinked ? model.linkedScrollFraction : nil,
+                        onScrollChange: { [weak model] fraction in
+                            guard let model, model.scrollLinked else { return }
+                            model.linkedScrollFraction = fraction
+                        },
                         onCopy: { model.copyFiles([file]) },
                         onSave: { model.saveFile(file) }
                     )
@@ -443,20 +530,25 @@ private struct PreviewNodeRow: View {
 }
 
 /// 单个文件的预览栏：标题栏（文件名 + 操作按钮组）+ 按状态渲染（加载中/图像/文本/二进制/失败）。
-/// 图像预览支持缩放：标题栏 −/百分比/＋，内容区 pinch 手势；百分比点击还原 100%
+/// 图像预览缩放：zoom == nil 为 fit 模式（适应窗口、不放大超过原图）；
+/// 标题栏 −/百分比/＋/fit，内容区 pinch 手势；百分比点击还原 100%，fit 按钮回到适应窗口
 private struct PreviewPane: View {
     let node: PreviewNode
     let state: PreviewWindowModel.PreviewState
     let canExport: Bool
+    /// nil = fit 模式；缩放状态在窗口模型里（连接缩放需要跨栏同步）
+    let zoom: CGFloat?
+    let onZoomChange: (CGFloat?) -> Void
+    /// 连接滚动的目标位置（归一化 0...1）；nil = 未开启同步
+    let scrollSync: CGPoint?
+    let onScrollChange: (CGPoint) -> Void
     let onCopy: () -> Void
     let onSave: () -> Void
 
-    /// 图像缩放倍率（1 = 原始尺寸）。@State 随 ForEach 里的文件 id 保持，切换选中不串
-    @State private var zoom: CGFloat = 1
+    /// fit 模式的实际缩放系数（由内容区几何尺寸算出，供百分比展示与 +/−/pinch 起点用）
+    @State private var fittedScale: CGFloat = 1
     /// pinch 手势起点倍率（手势值是相对起点的比例）
     @State private var pinchBaseZoom: CGFloat?
-
-    private static let zoomRange: ClosedRange<CGFloat> = 0.1...8
 
     var body: some View {
         VStack(spacing: 0) {
@@ -479,23 +571,29 @@ private struct PreviewPane: View {
                 .truncationMode(.middle)
             Spacer(minLength: 8)
             if isImage {
-                Button { setZoom(zoom / 1.25) } label: {
+                Button { onZoomChange(effectiveScale / 1.25) } label: {
                     Image(systemName: "minus.magnifyingglass")
                 }
                 .accessibilityIdentifier("preview-zoom-out")
                 .help("缩小")
-                Button { setZoom(1) } label: {
-                    Text("\(Int((zoom * 100).rounded()))%")
+                Button { onZoomChange(1) } label: {
+                    Text("\(Int((effectiveScale * 100).rounded()))%")
                         .font(.caption.monospacedDigit())
                         .frame(minWidth: 36)
                 }
                 .accessibilityIdentifier("preview-zoom-reset")
                 .help("还原 100%")
-                Button { setZoom(zoom * 1.25) } label: {
+                Button { onZoomChange(effectiveScale * 1.25) } label: {
                     Image(systemName: "plus.magnifyingglass")
                 }
                 .accessibilityIdentifier("preview-zoom-in")
                 .help("放大")
+                Button { onZoomChange(nil) } label: {
+                    Image(systemName: "arrow.down.right.and.arrow.up.left")
+                }
+                .accessibilityIdentifier("preview-zoom-fit")
+                .disabled(zoom == nil)
+                .help("适应窗口（fit）")
                 Divider().frame(height: 12)
             }
             Button(action: onCopy) {
@@ -517,8 +615,19 @@ private struct PreviewPane: View {
         .background(.quaternary.opacity(0.5))
     }
 
-    private func setZoom(_ value: CGFloat) {
-        zoom = min(Self.zoomRange.upperBound, max(Self.zoomRange.lowerBound, value))
+    /// 当前实际缩放系数：手动缩放值，fit 模式下为几何算出的适应系数
+    private var effectiveScale: CGFloat {
+        zoom ?? fittedScale
+    }
+
+    private var magnifyGesture: some Gesture {
+        MagnifyGesture()
+            .onChanged { value in
+                let base = pinchBaseZoom ?? effectiveScale
+                pinchBaseZoom = base
+                onZoomChange(base * value.magnification)
+            }
+            .onEnded { _ in pinchBaseZoom = nil }
     }
 
     @ViewBuilder
@@ -531,24 +640,36 @@ private struct PreviewPane: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .image(let image):
-            ScrollView([.horizontal, .vertical]) {
-                Image(nsImage: image)
-                    .resizable()
-                    .frame(
-                        width: max(image.size.width, 1) * zoom,
-                        height: max(image.size.height, 1) * zoom
-                    )
-                    .padding(8)
+            if let zoom {
+                // NSScrollView 封装：SwiftUI ScrollView 无法读写连续滚动偏移，连接滚动做不了
+                ZoomedImageScrollView(
+                    image: image,
+                    zoom: zoom,
+                    scrollFraction: scrollSync,
+                    onScroll: onScrollChange,
+                    onZoomChange: onZoomChange
+                )
+            } else {
+                // fit 模式：适应内容区（留 8pt 边距）且从不超过原图尺寸，居中展示
+                GeometryReader { geo in
+                    let scale = CGFloat(PreviewZoom.fitScale(
+                        imageWidth: image.size.width,
+                        imageHeight: image.size.height,
+                        containerWidth: geo.size.width - 16,
+                        containerHeight: geo.size.height - 16
+                    ))
+                    Image(nsImage: image)
+                        .resizable()
+                        .frame(
+                            width: max(image.size.width, 1) * scale,
+                            height: max(image.size.height, 1) * scale
+                        )
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .onChange(of: scale, initial: true) { fittedScale = scale }
+                }
+                .contentShape(Rectangle())
+                .gesture(magnifyGesture)
             }
-            .gesture(
-                MagnifyGesture()
-                    .onChanged { value in
-                        let base = pinchBaseZoom ?? zoom
-                        pinchBaseZoom = base
-                        setZoom(base * value.magnification)
-                    }
-                    .onEnded { _ in pinchBaseZoom = nil }
-            )
         case .text(let text, let truncated):
             VStack(spacing: 0) {
                 if truncated {
@@ -589,6 +710,129 @@ private struct PreviewPane: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
+}
+
+// MARK: - 缩放图像的滚动容器
+
+/// zoom 模式下的图像滚动容器（NSScrollView 封装）。
+/// 连接滚动：用户滚动时把位置按可滚动范围归一化上报（onScroll），
+/// 外部传入 scrollFraction 时按比例定位——不同尺寸/倍率的图片也能对应同步。
+/// pinch 缩放走 NSMagnificationGestureRecognizer（NSScrollView 会吞掉 SwiftUI 手势）
+private struct ZoomedImageScrollView: NSViewRepresentable {
+    let image: NSImage
+    let zoom: CGFloat
+    /// 连接滚动的目标位置（归一化 0...1）；nil = 不同步
+    let scrollFraction: CGPoint?
+    let onScroll: (CGPoint) -> Void
+    let onZoomChange: (CGFloat?) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
+        scrollView.drawsBackground = false
+        scrollView.allowsMagnification = false
+
+        let imageView = FlippedImageView()
+        imageView.image = image
+        imageView.imageScaling = .scaleAxesIndependently
+        imageView.frame = NSRect(origin: .zero, size: zoomedSize)
+        scrollView.documentView = imageView
+
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            context.coordinator,
+            selector: #selector(Coordinator.boundsDidChange(_:)),
+            name: NSView.boundsDidChangeNotification,
+            object: scrollView.contentView
+        )
+        scrollView.addGestureRecognizer(
+            NSMagnificationGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleMagnify(_:)))
+        )
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        context.coordinator.parent = self
+        guard let imageView = scrollView.documentView as? FlippedImageView else { return }
+        if imageView.image !== image {
+            imageView.image = image
+        }
+        if imageView.frame.size != zoomedSize {
+            // 尺寸变化会连带触发 bounds 通知，标记为程序性滚动避免误上报
+            context.coordinator.isProgrammaticScroll = true
+            imageView.setFrameSize(zoomedSize)
+            context.coordinator.isProgrammaticScroll = false
+        }
+        if let fraction = scrollFraction {
+            context.coordinator.apply(fraction: fraction, to: scrollView)
+        }
+    }
+
+    private var zoomedSize: NSSize {
+        NSSize(width: max(image.size.width, 1) * zoom, height: max(image.size.height, 1) * zoom)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        var parent: ZoomedImageScrollView
+        /// 程序性滚动（同步定位/改尺寸）期间抑制 bounds 通知上报，防止反馈环
+        var isProgrammaticScroll = false
+        private var pinchBaseZoom: CGFloat?
+
+        init(_ parent: ZoomedImageScrollView) {
+            self.parent = parent
+        }
+
+        @objc func boundsDidChange(_ notification: Notification) {
+            guard !isProgrammaticScroll,
+                  let clipView = notification.object as? NSClipView,
+                  let documentView = clipView.documentView
+            else { return }
+            let bounds = clipView.bounds
+            let fraction = CGPoint(
+                x: PreviewZoom.scrollFraction(origin: bounds.origin.x, viewport: bounds.width, document: documentView.frame.width),
+                y: PreviewZoom.scrollFraction(origin: bounds.origin.y, viewport: bounds.height, document: documentView.frame.height)
+            )
+            parent.onScroll(fraction)
+        }
+
+        func apply(fraction: CGPoint, to scrollView: NSScrollView) {
+            guard let documentView = scrollView.documentView else { return }
+            let clipView = scrollView.contentView
+            let target = NSPoint(
+                x: PreviewZoom.scrollOrigin(fraction: fraction.x, viewport: clipView.bounds.width, document: documentView.frame.width),
+                y: PreviewZoom.scrollOrigin(fraction: fraction.y, viewport: clipView.bounds.height, document: documentView.frame.height)
+            )
+            let current = clipView.bounds.origin
+            guard abs(target.x - current.x) > 0.5 || abs(target.y - current.y) > 0.5 else { return }
+            isProgrammaticScroll = true
+            clipView.scroll(to: target)
+            scrollView.reflectScrolledClipView(clipView)
+            isProgrammaticScroll = false
+        }
+
+        @objc func handleMagnify(_ gesture: NSMagnificationGestureRecognizer) {
+            switch gesture.state {
+            case .began:
+                pinchBaseZoom = parent.zoom
+            case .changed:
+                let base = pinchBaseZoom ?? parent.zoom
+                parent.onZoomChange(base * (1 + gesture.magnification))
+            default:
+                pinchBaseZoom = nil
+            }
+        }
+    }
+}
+
+/// 翻转坐标系的 NSImageView：让滚动原点落在左上角（与阅读习惯一致）
+private final class FlippedImageView: NSImageView {
+    override var isFlipped: Bool { true }
 }
 
 // MARK: - 窗口控制器

@@ -9,6 +9,7 @@ macOS 菜单栏工具：把本机剪贴板里的截图/文件/文本以最少步
 - 同步剪贴板支持单个图片文件引用 ✅：Finder ⌘C 的图片文件（png/jpg/heic/webp 等）读文件转 PNG 后走图像同步路径注入远端剪贴板；多文件/非图片仍拒绝
 - 预览远端目录 ✅：每机器菜单「🔍 预览远端目录…」（同步剪贴板下方）→ 输入路径开独立预览窗口（可多开）：左树（`ls -1Ap` 懒加载）右预览（文本/图像，二进制拒绝），每窗口内存缓存（切回瞬时）、⌘ 多选分栏对比、pin 置顶；纯逻辑在 Core `RemoteBrowse.swift`，UI 在 `UI/PreviewWindow.swift`
 - 预览窗口导出与缩放 ✅：⌘C/⌃C 复制选中文件（文件引用，Finder 可粘贴）；分栏标题栏右侧按钮组——图像的 −/百分比/＋ 缩放（pinch 手势同步支持，百分比点击还原 100%）+ 复制 + 下载（NSSavePanel 另存，二进制文件同样可导出）；缓存以 `<UUID>/<原文件名>` 存放保证导出保留原名
+- 预览窗口打磨 ✅：侧栏宽度自绘分割条（弃 HSplitView，宽度只随用户拖动变化，不再被内容重排跳变）；图像默认 fit 模式（适应窗口、从不放大超过原图，`PreviewZoom.fitScale` 纯逻辑在 Core），工具栏加 fit 按钮回到适应窗口；顶栏「连接 Zoom」/「连接 Scroll」按钮（选中 ≥2 张图片时出现）分别同步多栏缩放与滚动位置（zoom 模式图像容器为 NSScrollView 封装 `ZoomedImageScrollView`，滚动按归一化比例同步，pinch 走 NSMagnificationGestureRecognizer）；预览路径输入弹窗展示近期路径（点击覆盖输入框，UserDefaults `previewRecentPaths.<sshAlias>` 按机器存 8 条，`RecentPaths` 纯逻辑在 Core，弹窗 UI 在 `UI/PreviewPathPrompt.swift`）
 - M4 待做：全局热键、登录启动项、浏览器拖图评估
 - 历次改动细节见 `kb/sessions/`
 

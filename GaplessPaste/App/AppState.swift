@@ -130,23 +130,13 @@ final class AppState {
         probeService.cached(machine.sshAlias)?.isDarwin
     }
 
-    /// 预览远端目录：弹输入框要路径 → 开独立预览窗口（可多开，各自缓存）
+    /// 预览远端目录：弹输入框要路径（附近期路径快捷填充）→ 开独立预览窗口（可多开，各自缓存）
     func previewFolder(machine: Machine) {
         NSApp.activate(ignoringOtherApps: true)
-        let alert = NSAlert()
-        alert.messageText = "预览远端目录"
-        alert.informativeText = "输入 \(machine.name) 上的目录路径（支持 ~/ 前缀）"
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
-        field.stringValue = "~/"
-        field.placeholderString = "~/claude-inbox"
-        field.setAccessibilityIdentifier("preview-path-field")
-        alert.accessoryView = field
-        alert.addButton(withTitle: "打开预览")
-        alert.addButton(withTitle: "取消")
-        alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let path = field.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !path.isEmpty else { return }
+        let recentsKey = "previewRecentPaths.\(machine.sshAlias)"
+        let recents = UserDefaults.standard.stringArray(forKey: recentsKey) ?? []
+        guard let path = PreviewPathPrompt.run(machineName: machine.name, recentPaths: recents) else { return }
+        UserDefaults.standard.set(RecentPaths.updated(recents, adding: path), forKey: recentsKey)
 
         let controller = PreviewWindowController(
             machine: machine, path: path,
