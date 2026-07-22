@@ -4,7 +4,8 @@ import GaplessPasteCore
 
 // 预览远端目录窗口：左侧目录树（懒加载子目录），右侧文件预览。
 // - 可开多个窗口，各自独立（互不共享状态）
-// - 每窗口内存缓存：文件下载一次后切换回来瞬时加载（关窗即弃）
+// - 文件缓存持久化：下载落到 ~/Library/Caches/GaplessPaste/preview/（机器-路径-文件
+//   定位见 Core PreviewCache），跨窗口、跨启动命中即免下载；分栏工具栏的刷新按钮强制重新下载
 // - ⌘ 多选文件 → 右侧分栏并排预览，方便对比
 // - pin 置顶：window.level = .floating
 
@@ -50,9 +51,9 @@ final class PreviewWindowModel: ObservableObject {
     @Published var isPinned = false {
         didSet { onPinChange?(isPinned) }
     }
-    /// 预览缓存：key = 远端路径。窗口存续期间不失效，切回已看过的文件瞬时加载
+    /// 内存预览状态：key = 远端路径。窗口存续期间不失效，切回已看过的文件瞬时加载
     @Published private(set) var previews: [String: PreviewState] = [:]
-    /// 已下载到本地缓存的文件：key = 远端路径。复制/下载按钮由此取本地文件
+    /// 已落到持久化缓存的文件：key = 远端路径。复制/下载按钮由此取本地文件
     /// （二进制文件不可预览但同样已下载，可复制/下载）
     @Published private(set) var downloadedFiles: [String: URL] = [:]
     /// 复制/下载动作的短暂反馈（顶栏展示，3s 自动消失）
@@ -75,8 +76,10 @@ final class PreviewWindowModel: ObservableObject {
     private let log: LogService
     /// 已创建节点索引：选中集合（路径）→ 节点（判断文件/目录）
     private var nodesByPath: [String: PreviewNode] = [:]
-    /// 本窗口私有的下载缓存目录，关窗清理
-    private let cacheDirectory: URL
+    /// 持久化缓存根目录：跨窗口、跨启动共享，不随关窗清理
+    private static let persistentCacheRoot = FileManager.default
+        .urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        .appendingPathComponent("GaplessPaste/preview", isDirectory: true)
 
     init(machine: Machine, path: String, runner: SSHRunner, builder: SSHCommandBuilder, probeService: ProbeService, log: LogService) {
         self.machine = machine
@@ -85,8 +88,13 @@ final class PreviewWindowModel: ObservableObject {
         self.builder = builder
         self.probeService = probeService
         self.log = log
-        cacheDirectory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("GaplessPaste/preview-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    /// 该远端文件在持久化缓存中的固定落点（机器-路径-文件 稳定映射）
+    private func cacheURL(for node: PreviewNode) -> URL {
+        Self.persistentCacheRoot.appendingPathComponent(
+            PreviewCache.relativePath(sshAlias: machine.sshAlias, remotePath: node.id)
+        )
     }
 
     /// 探测（~ 展开）→ 校验目录存在 → 列根目录
@@ -116,14 +124,14 @@ final class PreviewWindowModel: ObservableObject {
         }
     }
 
-    /// 刷新：重列目录树并清空预览缓存
+    /// 刷新：重列目录树并清空内存预览状态。磁盘缓存保留（重选文件仍瞬时命中），
+    /// 要强制重新下载某个文件用分栏工具栏的刷新按钮（refreshFile）
     func refresh() {
         selection = []
         previews = [:]
         downloadedFiles = [:]
         imageZoom = [:]
         nodesByPath = [:]
-        try? FileManager.default.removeItem(at: cacheDirectory)
         start()
     }
 
@@ -192,10 +200,35 @@ final class PreviewWindowModel: ObservableObject {
         }
     }
 
-    /// 选中变化时为尚无缓存的文件启动下载；已缓存的瞬时命中
+    /// 选中变化时为尚无内存状态的文件加载预览：持久化缓存命中直接读盘，否则下载
     func ensurePreviews() {
         for node in selectedFiles where previews[node.id] == nil {
             previews[node.id] = .loading
+            let cached = cacheURL(for: node)
+            if FileManager.default.fileExists(atPath: cached.path) {
+                loadFromCache(node, localURL: cached)
+            } else {
+                downloadAndPreview(node)
+            }
+        }
+    }
+
+    /// 单文件强制刷新：忽略持久化缓存重新下载，成功后更新缓存
+    func refreshFile(_ node: PreviewNode) {
+        if case .some(.loading) = previews[node.id] { return }
+        previews[node.id] = .loading
+        downloadedFiles[node.id] = nil
+        log.info("预览窗口：强制刷新 \(machine.name):\(node.id)")
+        downloadAndPreview(node)
+    }
+
+    private func loadFromCache(_ node: PreviewNode, localURL: URL) {
+        do {
+            let data = try Data(contentsOf: localURL)
+            downloadedFiles[node.id] = localURL
+            previews[node.id] = Self.makePreview(fileName: node.name, data: data)
+        } catch {
+            // 缓存文件读不出来（被系统/用户清理了一半等）→ 按未缓存重新下载
             downloadAndPreview(node)
         }
     }
@@ -203,21 +236,27 @@ final class PreviewWindowModel: ObservableObject {
     private func downloadAndPreview(_ node: PreviewNode) {
         Task {
             do {
-                // 每个文件独占一个 UUID 子目录、保留原始文件名：
-                // 复制到剪贴板 / 下载另存时拿到的就是原名文件
-                let directory = cacheDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+                // 缓存路径末段保留原始文件名：复制到剪贴板 / 下载另存时拿到的就是原名文件。
+                // 先下到同目录临时名再替换，避免多窗口同时下载/刷新读到半截文件
+                let target = cacheURL(for: node)
+                let directory = target.deletingLastPathComponent()
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-                let localURL = directory.appendingPathComponent(node.name)
+                let partial = directory.appendingPathComponent(".part-\(UUID().uuidString)")
                 let result = try await runner.run(
-                    builder.scpDownloadCommand(host: machine.sshAlias, remotePath: node.id, localPath: localURL.path),
+                    builder.scpDownloadCommand(host: machine.sshAlias, remotePath: node.id, localPath: partial.path),
                     timeout: 120
                 )
                 guard result.succeeded else {
+                    try? FileManager.default.removeItem(at: partial)
                     previews[node.id] = .failed(result.firstStderrLine)
                     return
                 }
-                let data = try Data(contentsOf: localURL)
-                downloadedFiles[node.id] = localURL
+                let data = try Data(contentsOf: partial)
+                if FileManager.default.fileExists(atPath: target.path) {
+                    try FileManager.default.removeItem(at: target)
+                }
+                try FileManager.default.moveItem(at: partial, to: target)
+                downloadedFiles[node.id] = target
                 previews[node.id] = Self.makePreview(fileName: node.name, data: data)
             } catch {
                 previews[node.id] = .failed(error.localizedDescription)
@@ -290,10 +329,6 @@ final class PreviewWindowModel: ObservableObject {
             guard let decoded = FilePreview.decodeText(data) else { return .binary(byteCount: data.count) }
             return .text(decoded.text, truncated: decoded.truncated)
         }
-    }
-
-    func cleanup() {
-        try? FileManager.default.removeItem(at: cacheDirectory)
     }
 }
 
@@ -395,7 +430,7 @@ struct PreviewWindowView: View {
                 Image(systemName: "arrow.clockwise")
             }
             .accessibilityIdentifier("preview-refresh")
-            .help("重新加载目录树并清空预览缓存")
+            .help("重新加载目录树（文件磁盘缓存保留，单文件强制刷新用分栏上的刷新按钮）")
             Button {
                 model.isPinned.toggle()
             } label: {
@@ -474,6 +509,7 @@ struct PreviewWindowView: View {
                             guard let model, model.scrollLinked else { return }
                             model.linkedScrollFraction = fraction
                         },
+                        onRefresh: { model.refreshFile(file) },
                         onCopy: { model.copyFiles([file]) },
                         onSave: { model.saveFile(file) }
                     )
@@ -542,6 +578,8 @@ private struct PreviewPane: View {
     /// 连接滚动的目标位置（归一化 0...1）；nil = 未开启同步
     let scrollSync: CGPoint?
     let onScrollChange: (CGPoint) -> Void
+    /// 强制刷新：忽略持久化缓存重新下载
+    let onRefresh: () -> Void
     let onCopy: () -> Void
     let onSave: () -> Void
 
@@ -560,6 +598,11 @@ private struct PreviewPane: View {
 
     private var isImage: Bool {
         if case .image = state { return true }
+        return false
+    }
+
+    private var isLoading: Bool {
+        if case .loading = state { return true }
         return false
     }
 
@@ -596,6 +639,12 @@ private struct PreviewPane: View {
                 .help("适应窗口（fit）")
                 Divider().frame(height: 12)
             }
+            Button(action: onRefresh) {
+                Image(systemName: "arrow.clockwise")
+            }
+            .accessibilityIdentifier("preview-file-refresh")
+            .disabled(isLoading)
+            .help("强制重新下载并更新缓存")
             Button(action: onCopy) {
                 Image(systemName: "doc.on.doc")
             }
@@ -871,7 +920,6 @@ final class PreviewWindowController: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
-        model.cleanup()
         onClose?()
     }
 }
