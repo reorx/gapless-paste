@@ -90,6 +90,7 @@ final class AppState {
         Task { await prepareAndSync(machine: machine) }
     }
 
+
     /// 快速上传（M4）：读剪贴板 → 按内容类型选该机器对应角色的默认目录 → 委托 upload 走完整流程。
     /// 文件引用 → .file 默认目录；图像 → .image 默认目录（仍弹重命名浮窗）；
     /// 纯文本引导去「同步剪贴板」、空剪贴板与未配置默认目录均以通知提示。
@@ -109,7 +110,7 @@ final class AppState {
         case .imageData:
             role = .image
         case .text:
-            notifier.notify(title: "GaplessPaste", body: "剪贴板是纯文本，请用「⇄ 同步剪贴板」")
+            notifier.notify(title: "GaplessPaste", body: "剪贴板是纯文本，请用「同步到远端剪贴板 →」")
             return
         case .empty:
             notifier.notify(title: "GaplessPaste", body: TransferRejection.emptyClipboard.userMessage)
@@ -437,6 +438,71 @@ final class AppState {
                 }
                 log.error("同步剪贴板失败：\(error.localizedDescription)")
                 notifier.notify(title: "同步剪贴板失败", body: error.localizedDescription)
+            }
+        }
+    }
+
+    // MARK: - 从远端剪贴板同步（远端 → 本机）
+
+    /// 一次 ssh 拿图像（osascript 打印 «data PNGf<hex>»，本机 hex 解码）；
+    /// 非图像（哨兵命中）再 ssh pbpaste 拿文本；空文本 = 远端剪贴板为空
+    func syncClipboardFromRemote(machine: Machine) {
+        Task {
+            guard !isBusy else { return }
+            isBusy = true
+            statusLine = "进行中：从 \(machine.name) 同步剪贴板…"
+            defer { isBusy = false }
+            do {
+                let probe = try await probeService.probe(machine.sshAlias)
+                guard let extract = RemoteClipboard.imageExtractionCommand(probe: probe) else {
+                    // 非 Darwin：与推送方向同一拒绝语义，探测结果已入缓存，菜单下次打开即置灰
+                    statusLine = nil
+                    log.info("拒绝：\(SyncRejection.remoteClipboardUnsupported.userMessage)")
+                    notifier.notify(title: "GaplessPaste", body: SyncRejection.remoteClipboardUnsupported.userMessage)
+                    return
+                }
+                // 图像经 hex 回传体积翻倍，超时放宽到 60s
+                let result = try await runner.run(commandBuilder.sshCommand(host: machine.sshAlias, remoteCommand: extract), timeout: 60)
+                guard result.succeeded else {
+                    throw AppError.commandFailed(operation: "读取远端剪贴板", detail: result.firstStderrLine)
+                }
+                let summary: String
+                switch RemoteClipboard.parseImageExtractionOutput(result.stdout) {
+                case .imagePNG(let png):
+                    pasteboard.writeImagePNG(png)
+                    summary = "图像 \(DisplayFormatter.byteCountText(png.count))"
+                case .notImage:
+                    let textCommand = RemoteClipboard.textExtractionCommand(probe: probe)!
+                    let textResult = try await runner.run(commandBuilder.sshCommand(host: machine.sshAlias, remoteCommand: textCommand), timeout: 20)
+                    guard textResult.succeeded else {
+                        throw AppError.commandFailed(operation: "读取远端剪贴板文本", detail: textResult.firstStderrLine)
+                    }
+                    guard !textResult.stdout.isEmpty else {
+                        statusLine = nil
+                        log.info("从 \(machine.name) 同步剪贴板：远端剪贴板为空")
+                        notifier.notify(title: "GaplessPaste", body: "\(machine.name) 的剪贴板是空的")
+                        return
+                    }
+                    pasteboard.writeText(textResult.stdout)
+                    summary = "文本 \(textResult.stdout.count) 字符"
+                case .unrecognized:
+                    throw AppError.commandFailed(operation: "读取远端剪贴板", detail: "无法识别的远端输出")
+                }
+                hasRetryableFailure = false
+                retryAction = nil
+                statusLine = "上次：✓ \(machine.name) 剪贴板（\(summary)）→ 本机"
+                lastFinishedAt = Date()
+                log.info("从远端同步剪贴板成功：\(machine.name) → 本机，\(summary)")
+                notifier.notify(title: "已从 \(machine.name) 同步剪贴板", body: "\(summary)，本机 ⌘V 可用")
+            } catch {
+                statusLine = "上次：✗ \(error.localizedDescription)"
+                lastFinishedAt = Date()
+                hasRetryableFailure = true
+                retryAction = { [weak self] in
+                    self?.syncClipboardFromRemote(machine: machine)
+                }
+                log.error("从远端同步剪贴板失败：\(error.localizedDescription)")
+                notifier.notify(title: "从远端同步剪贴板失败", body: error.localizedDescription)
             }
         }
     }

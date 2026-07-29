@@ -25,7 +25,7 @@ public enum TransferRejection: Equatable, Sendable {
         case .emptyClipboard:
             return "剪贴板没有可上传的内容"
         case .unsupportedText:
-            return "剪贴板中是文本，目录上传不适用（请用「⇄ 同步剪贴板」）"
+            return "剪贴板中是文本，目录上传不适用（请用「同步到远端剪贴板 →」）"
         }
     }
 }

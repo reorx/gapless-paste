@@ -50,4 +50,14 @@ final class PasteboardService {
         pasteboard.clearContents()
         pasteboard.setString(string, forType: .string)
     }
+
+    /// 远端拉回的 PNG 写入本地剪贴板；同时放一份 TIFF（部分应用只读 TIFF）
+    func writeImagePNG(_ png: Data) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setData(png, forType: .png)
+        if let rep = NSBitmapImageRep(data: png), let tiff = rep.tiffRepresentation {
+            pasteboard.setData(tiff, forType: .tiff)
+        }
+    }
 }

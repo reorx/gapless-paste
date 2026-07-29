@@ -11,6 +11,7 @@ macOS 菜单栏工具：把本机剪贴板里的截图/文件/文本以最少步
 - 预览窗口导出与缩放 ✅：⌘C/⌃C 复制选中文件（文件引用，Finder 可粘贴）；分栏标题栏右侧按钮组——图像的 −/百分比/＋ 缩放（pinch 手势同步支持，百分比点击还原 100%）+ 复制 + 下载（NSSavePanel 另存，二进制文件同样可导出）；缓存以 `<UUID>/<原文件名>` 存放保证导出保留原名
 - 预览缓存持久化 ✅：文件缓存从每窗口临时目录改为 `~/Library/Caches/GaplessPaste/preview/` 共享持久目录，机器-路径-文件 稳定映射（`<alias>/<远端路径 SHA256 前16位>/<原文件名>`，纯逻辑在 Core `PreviewCache.swift`），跨窗口/跨启动命中即免 scp；分栏标题栏新增刷新按钮（`preview-file-refresh`）强制重新下载（先下到 `.part-<uuid>` 再替换，多窗口并发安全）；顶栏刷新只重列目录树、不清磁盘缓存；关窗不再删缓存
 - 预览窗口打磨 ✅：侧栏宽度自绘分割条（弃 HSplitView，宽度只随用户拖动变化，不再被内容重排跳变）；图像默认 fit 模式（适应窗口、从不放大超过原图，`PreviewZoom.fitScale` 纯逻辑在 Core），工具栏加 fit 按钮回到适应窗口；顶栏「连接 Zoom」/「连接 Scroll」按钮（选中 ≥2 张图片时出现）分别同步多栏缩放与滚动位置（zoom 模式图像容器为 NSScrollView 封装 `ZoomedImageScrollView`，滚动按归一化比例同步，pinch 走 NSMagnificationGestureRecognizer）；预览路径输入弹窗展示近期路径（点击覆盖输入框，UserDefaults `previewRecentPaths.<sshAlias>` 按机器存 8 条，`RecentPaths` 纯逻辑在 Core，弹窗 UI 在 `UI/PreviewPathPrompt.swift`）
+- 同步剪贴板拆双向 ✅：每机器菜单拆成「同步到远端剪贴板 →」（原路径 B 推送）与「从远端剪贴板同步 ←」（新增拉取）：一次 ssh `osascript` try `the clipboard as «class PNGf»` 打印 `«data PNGf<hex>»` 拿图像（本机 hex 解码写回本地剪贴板，PNG+TIFF 双格式），非图像输出哨兵后回退 `pbpaste` 拉文本，空文本提示远端剪贴板为空；纯逻辑（提取命令 + 输出解析 `parseImageExtractionOutput`）在 Core `RemoteClipboard.swift`，非 Darwin 两项均置灰
 - M4 待做：全局热键、登录启动项、浏览器拖图评估
 - 历次改动细节见 `kb/sessions/`
 

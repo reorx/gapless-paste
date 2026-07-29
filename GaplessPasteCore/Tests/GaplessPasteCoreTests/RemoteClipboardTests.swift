@@ -49,4 +49,68 @@ struct RemoteClipboardTests {
         #expect(RemoteClipboard.syncTemporaryDirectory(probe: darwin) == "/Users/reorx/.cache/gapless-paste")
         #expect(RemoteClipboard.syncTemporaryPath(probe: darwin) == "/Users/reorx/.cache/gapless-paste/clipboard.png")
     }
+
+    // MARK: - 反向：从远端剪贴板拉取（远端 → 本机）
+
+    @Test("Darwin 图像提取：osascript try «class PNGf»，非图像时输出哨兵")
+    func darwinImageExtraction() {
+        let command = RemoteClipboard.imageExtractionCommand(probe: darwin)
+        let script = """
+        try
+        the clipboard as «class PNGf»
+        on error
+        "\(RemoteClipboard.notImageSentinel)"
+        end try
+        """
+        #expect(command == "osascript -e '\(script)'")
+    }
+
+    @Test("非 Darwin 图像提取返回 nil（不支持拉取）")
+    func nonDarwinImageExtractionIsNil() {
+        #expect(RemoteClipboard.imageExtractionCommand(probe: linux) == nil)
+    }
+
+    @Test("Darwin 文本提取：pbpaste（内容经 stdout 回传）")
+    func darwinTextExtraction() {
+        #expect(RemoteClipboard.textExtractionCommand(probe: darwin) == "pbpaste")
+    }
+
+    @Test("非 Darwin 文本提取返回 nil")
+    func nonDarwinTextExtractionIsNil() {
+        #expect(RemoteClipboard.textExtractionCommand(probe: linux) == nil)
+    }
+
+    @Test("提取输出解析：«data PNGf<hex>» → PNG 字节")
+    func parseImageOutput() {
+        // PNG 魔数 89 50 4E 47
+        let output = "«data PNGf89504E47»\n"
+        #expect(
+            RemoteClipboard.parseImageExtractionOutput(output)
+                == .imagePNG(Data([0x89, 0x50, 0x4E, 0x47]))
+        )
+    }
+
+    @Test("提取输出解析：小写 hex 同样接受")
+    func parseImageOutputLowercaseHex() {
+        #expect(
+            RemoteClipboard.parseImageExtractionOutput("«data PNGf89504e47»")
+                == .imagePNG(Data([0x89, 0x50, 0x4E, 0x47]))
+        )
+    }
+
+    @Test("提取输出解析：哨兵字符串 → notImage（上层转走 pbpaste 文本路径）")
+    func parseNotImageOutput() {
+        #expect(
+            RemoteClipboard.parseImageExtractionOutput("\(RemoteClipboard.notImageSentinel)\n")
+                == .notImage
+        )
+    }
+
+    @Test("提取输出解析：奇数长度 hex / 非法字符 / 其他输出 → unrecognized")
+    func parseUnrecognizedOutput() {
+        #expect(RemoteClipboard.parseImageExtractionOutput("«data PNGf895»") == .unrecognized)
+        #expect(RemoteClipboard.parseImageExtractionOutput("«data PNGfZZ»") == .unrecognized)
+        #expect(RemoteClipboard.parseImageExtractionOutput("random garbage") == .unrecognized)
+        #expect(RemoteClipboard.parseImageExtractionOutput("") == .unrecognized)
+    }
 }
