@@ -83,4 +83,30 @@ struct SSHCommandBuilderTests {
         #expect(SSHCommandBuilder.isUsableControlPathDirectory(String(repeating: "a", count: 45)))
         #expect(!SSHCommandBuilder.isUsableControlPathDirectory(String(repeating: "a", count: 46)))
     }
+
+    // 复现线上 bug：app 只在启动时创建 socket 目录，长时间挂机后 macOS 周期清理
+    // 删掉 /tmp 下的目录，后续 ssh 报 "unix_listener: cannot bind to path ...
+    // No such file or directory"。修法：每次执行 ssh 前幂等确保目录存在
+    @Test("socket 目录被系统清理后，执行前可重建（0700）")
+    func recreatesControlPathDirectoryAfterCleanup() throws {
+        let fm = FileManager.default
+        let dir = NSTemporaryDirectory() + "gp-test-\(UUID().uuidString)/sockets"
+        defer { try? fm.removeItem(atPath: (dir as NSString).deletingLastPathComponent) }
+        let builder = SSHCommandBuilder(controlPathDirectory: dir)
+
+        // 首次创建
+        try builder.ensureControlPathDirectory()
+        var isDir: ObjCBool = false
+        #expect(fm.fileExists(atPath: dir, isDirectory: &isDir) && isDir.boolValue)
+        let permissions = try fm.attributesOfItem(atPath: dir)[.posixPermissions] as? Int
+        #expect(permissions == 0o700)
+
+        // 模拟 /tmp 周期清理删掉目录后重建
+        try fm.removeItem(atPath: dir)
+        try builder.ensureControlPathDirectory()
+        #expect(fm.fileExists(atPath: dir, isDirectory: &isDir) && isDir.boolValue)
+
+        // 已存在时幂等，不抛错
+        try builder.ensureControlPathDirectory()
+    }
 }

@@ -31,14 +31,23 @@ enum SSHRunnerError: Error, LocalizedError {
 
 final class SSHRunner: Sendable {
     private let log: LogService
+    private let builder: SSHCommandBuilder
 
-    init(log: LogService) {
+    init(log: LogService, builder: SSHCommandBuilder) {
         self.log = log
+        self.builder = builder
     }
 
     /// stdin 非 nil 时把数据写入子进程标准输入后关闭（pbcopy 文本注入用，
     /// 避免文本进 argv 的长度与转义问题）
     func run(_ argv: [String], timeout: TimeInterval = 60, stdin: Data? = nil) async throws -> CommandResult {
+        // /tmp 周期清理会删掉长时间未访问的 ControlPath 目录，执行前幂等重建；
+        // 失败只记录，让 ssh 自身的报错继续走正常失败路径
+        do {
+            try builder.ensureControlPathDirectory()
+        } catch {
+            log.error("重建 ControlPath 目录失败：\(error.localizedDescription)")
+        }
         log.debug("$ \(LogFormatter.describeCommand(argv))\(stdin.map { " <<< (\($0.count) bytes stdin)" } ?? "")")
         let started = Date()
         return try await withCheckedThrowingContinuation { continuation in

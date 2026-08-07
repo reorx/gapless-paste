@@ -58,15 +58,11 @@ final class AppState {
     init() {
         // ControlMaster socket 目录：必须短（sun_path 104 字节上限，预算见
         // SSHCommandBuilder）且无空格（ssh -o 值按配置行分词）。
-        // Caches / Application Support 前缀都超预算，只能落在 /tmp，0700 保证用户私有
+        // Caches / Application Support 前缀都超预算，只能落在 /tmp，0700 保证用户私有；
+        // /tmp 会被系统周期清理，目录由 SSHRunner 在每次执行前幂等重建
         let socketsDir = SSHCommandBuilder.defaultControlPathDirectory(uid: getuid())
-        try? FileManager.default.createDirectory(
-            atPath: socketsDir,
-            withIntermediateDirectories: true,
-            attributes: [.posixPermissions: 0o700]
-        )
         commandBuilder = SSHCommandBuilder(controlPathDirectory: socketsDir)
-        runner = SSHRunner(log: log)
+        runner = SSHRunner(log: log, builder: commandBuilder)
         probeService = ProbeService(runner: runner, builder: commandBuilder)
         notifier.requestAuthorization()
 

@@ -74,4 +74,15 @@ public struct SSHCommandBuilder: Sendable {
     public static func defaultControlPathDirectory(uid: UInt32) -> String {
         "/tmp/gaplesspaste-\(uid)"
     }
+
+    /// 幂等确保 socket 目录存在（0700）。macOS 周期清理会删掉 /tmp 下
+    /// 数天未访问的目录，长时间挂机后 ControlPath 父目录消失会导致
+    /// "unix_listener: cannot bind to path ..."，因此每次执行 ssh/scp 前都应调用
+    public func ensureControlPathDirectory(fileManager: FileManager = .default) throws {
+        try fileManager.createDirectory(
+            atPath: controlPathDirectory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+    }
 }
