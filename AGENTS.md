@@ -78,23 +78,37 @@ make clean       # 清理构建产物与生成的 xcodeproj
 
 - 本机 iTerm2 的 Screen Recording 在 TCC 里被明确拒绝（auth=0），`screencapture` 必失败；查授权状态：`sqlite3 /Library/"Application Support"/com.apple.TCC/TCC.db "SELECT service,client,auth_value FROM access WHERE service='kTCCServiceScreenCapture'"`
 - DEBUG 构建内置自截图钩子 `App/DebugHooks.swift`：监听分布式通知，用 `NSView.cacheDisplay` 截 app 自己的每个可见窗口（含标题栏），**不需要任何 TCC 权限**
-- 触发：`swift tmp/capture.swift <输出目录>`，每个可见窗口输出一张 `window-<n>-<标题>.png`
+- 触发：`swift scripts/capture.swift <输出目录>`，每个可见窗口输出一张 `window-<n>-<标题>.png`
 
-**模拟操作：AppleScript AX，按 `accessibilityIdentifier` 定位**
+**现成脚本都在 `scripts/`（随仓库走，全部真机验证过）**
 
-- 给可交互控件埋 `.accessibilityIdentifier("xxx")`（映射为 AXIdentifier），脚本里用 `entire contents of window` 递归枚举后按 identifier 过滤——`whose` 子句不递归，别指望它
-- 现成脚本：`tmp/ax_click.applescript <id>` 点按钮；`tmp/ax_paste.applescript <id> <第几个> <文本>` 往文本框填值
-- 状态栏菜单路径：LSUIElement app 的 status item 是 `menu bar item 1 of menu bar 2 of process "GaplessPaste"`，click 展开后再 click 里面的 menu item；读菜单项标题（`name of every menu item`）可无截图验证菜单状态，`key code 53`（Esc）收起菜单
-- 操作前 `set frontmost to true`（LSUIElement app 不会自己在前台）
+长期有用的验收脚本放 `scripts/`，一次性的探索脚本才放 `tmp/`（整目录 gitignore）。所有 AX 脚本第一个参数都是**窗口标题片段**（设置窗口传 `设置`，预览窗口传 `🔍`），进程名固定 `GaplessPaste`：
+
+| 脚本 | 用途 |
+| --- | --- |
+| `ax_dump.applescript <窗口> [深度]` | 打印 AX 树（层级 + 类型 + AXIdentifier + 值）。**写任何新 AX 脚本前先跑它**，别猜结构 |
+| `ax_press.applescript <窗口> <id>` | 按 AXIdentifier 找按钮并 AXPress |
+| `ax_fill.applescript <窗口> <id> <第几个> <文本>` | 往文本框填值（走剪贴板绕开 IME）；同 id 多个用序号区分 |
+| `ax_select_row.applescript <窗口> <行文本>` | 选中 SwiftUI List 里的一行（如预览窗口目录树的文件） |
+| `ax_close_window.applescript <窗口>` | 关窗收尾还原现场 |
+| `menu_read.applescript` | 读状态栏菜单全部项标题（不截图核对菜单状态） |
+| `menu_click.applescript <标题> <第几个>` | 点状态栏菜单项（同名项每机器一个，用序号区分） |
+| `capture.swift <输出目录>` | 触发 app 自截图（见上节） |
+| `preview_open.swift <机器名> <路径>` | 直接开预览窗口（见下节 DEBUG 钩子） |
+
+- 给可交互控件埋 `.accessibilityIdentifier("xxx")`（映射为 AXIdentifier）才能被上述脚本定位
+- 状态栏菜单路径：LSUIElement app 的 status item 是 `menu bar item 1 of menu bar 2 of process "GaplessPaste"`，`key code 53`（Esc）收起菜单
+- 操作前 `set frontmost to true`（LSUIElement app 不会自己在前台），操作窗口前 `perform action "AXRaise"`
 
 **DEBUG 钩子：绕过 UI 直达目标状态（AX 不可靠时的兜底，`App/DebugHooks.swift`）**
 
 - 状态栏菜单项的 `click`/`AXPress` 有时静默失效（菜单开着不动、action 不触发，重试也没用），且预览入口的 NSAlert 模态弹窗又叠一层不确定性——验收要打开预览窗口时不走菜单，直接发分布式通知：`swift scripts/preview_open.swift <机器名> <远端路径>`（通知名 `com.reorx.gaplesspaste.debug.preview`，object 为 `机器名|路径`，跳过路径弹窗直接开窗）
-- 自截图钩子同理（`tmp/capture.swift <输出目录>`，见上节）；两个钩子都只在 DEBUG 构建注册，新增验收堵点时优先考虑加同类钩子而不是硬磕 AX
-- 长期有用的验收脚本放 `scripts/`（随仓库走），一次性的临时脚本才放 `tmp/`（整目录 gitignore）
+- 自截图钩子同理（通知名 `com.reorx.gaplesspaste.debug.capture`）；两个钩子都只在 DEBUG 构建注册，新增验收堵点时优先考虑加同类钩子而不是硬磕 AX
 
 **必踩的坑（都已验证）**
 
+- `entire contents of window` **在深层 SwiftUI 树上会静默返回空集合**（窗口明明有子元素，count 却是 0，且稳定复现不是偶发）——所有查找一律自己递归下降 `UI elements of`，`scripts/ax_*.applescript` 已是这个写法；`whose` 子句不递归，同样别指望
+- AppleScript 保留字会毒化变量名：拼接缓冲别叫 `line`，也别叫 `outLine`（会被解析成 `outline`），赋值直接报 `-10003 Access not allowed`——用 `buf` 这类无歧义的名字
 - SwiftUI TextField 直接 `set value of text field`（AXValue）只改显示、**不触发 binding**，数据不会真正变化——必须发真实键盘事件
 - 中文输入法会把 `keystroke` 的字母吞进组合缓冲（只有 `-` 等符号直通）——填文本一律走剪贴板：`set the clipboard to`… 后 `⌘A` + `⌘V`；操作前 `pbpaste` 备份用户剪贴板，结束后恢复
 - NSSavePanel/NSOpenPanel 是 XPC 远程渲染（openAndSavePanelService）：app 进程里的 AX 元素只是代理，`click`/`AXPress`/`set value` 全部静默无效，app 自截图也是黑的——**只能纯键盘驱动**：AXRaise 面板窗口后 `⌘⇧G` → `⌘A`+`⌘V`（路径先放剪贴板）→ 回车（确认前往）→ 回车（默认按钮存储）；每步间留足 delay
@@ -102,9 +116,10 @@ make clean       # 清理构建产物与生成的 xcodeproj
 
 **验收闭环**
 
-1. 先备份将被改动的真实数据（如 `config.json`）和用户剪贴板
+1. 先备份将被改动的真实数据（如 `config.json`）和用户剪贴板（`ax_fill` 会覆盖剪贴板）
 2. `make build && make run` → AX 打开目标界面 → 每步操作后**读实际落盘文件/日志**核对（不要只看 UI），关键状态触发自截图
-3. 结束后恢复备份、恢复剪贴板，让 app 重载，确认现场还原
+3. 结束后恢复备份、恢复剪贴板，让 app 重载，确认现场还原（改过 `config.json` 就 diff 回备份确认一致）
+4. 验收截图归档到 `tmp/<日期>-<任务名>/`，报告里给出目录路径
 
 ## 日志
 

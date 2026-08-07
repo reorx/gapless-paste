@@ -1,6 +1,6 @@
-// 自动化验收辅助：向 GaplessPaste（DEBUG 构建）发分布式通知，直接打开预览窗口
-// （绕过模态路径弹窗——AX 驱动 NSAlert 不可靠）。
-// 用法：swift tmp/preview_open.swift <机器名> <远端路径>
+// UI 自动化验收：向 GaplessPaste（DEBUG 构建）发分布式通知，直接打开预览窗口
+// （绕过状态栏菜单项 + 模态路径弹窗——这条 AX 路径已验证不可靠）。
+// 用法：swift scripts/preview_open.swift <机器名> <远端路径>
 import Foundation
 
 guard CommandLine.arguments.count >= 3 else {
