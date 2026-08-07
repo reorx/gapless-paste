@@ -55,10 +55,19 @@ struct RemoteBrowseTests {
         #expect(FilePreview.kind(forFileName: "pic.heic") == .image)
     }
 
+    @Test func previewKindAudioByExtension() {
+        #expect(FilePreview.kind(forFileName: "voice.wav") == .audio)
+        #expect(FilePreview.kind(forFileName: "SONG.MP3") == .audio)
+        #expect(FilePreview.kind(forFileName: "memo.m4a") == .audio)
+        #expect(FilePreview.kind(forFileName: "track.flac") == .audio)
+        #expect(FilePreview.kind(forFileName: "clip.aiff") == .audio)
+    }
+
     @Test func previewKindDefaultsToText() {
         #expect(FilePreview.kind(forFileName: "notes.md") == .text)
         #expect(FilePreview.kind(forFileName: "Makefile") == .text)
         #expect(FilePreview.kind(forFileName: "image.svg") == .text) // SVG 是 XML，按文本预览
+        #expect(FilePreview.kind(forFileName: "video.ogg") == .text) // AVAudioPlayer 不支持 ogg，不按音频处理
     }
 
     // MARK: - 文本预览解码（UTF-8 + 截断；二进制返回 nil）

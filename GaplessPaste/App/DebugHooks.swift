@@ -11,10 +11,13 @@ import AppKit
 //       object: "/输出目录",
 //       userInfo: nil, deliverImmediately: true)
 // 每个可见窗口写为 <输出目录>/window-<序号>-<标题>.png
+//
+// 预览窗口钩子（绕过模态路径弹窗，AX 驱动 NSAlert 不可靠）：
+//   通知名 com.reorx.gaplesspaste.debug.preview，object = "<机器名>|<远端路径>"
 
 @MainActor
 enum DebugHooks {
-    static func install() {
+    static func install(appState: AppState) {
         DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name("com.reorx.gaplesspaste.debug.capture"),
             object: nil,
@@ -23,6 +26,26 @@ enum DebugHooks {
             guard let dir = notification.object as? String else { return }
             Task { @MainActor in captureWindows(to: dir) }
         }
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.reorx.gaplesspaste.debug.preview"),
+            object: nil,
+            queue: .main
+        ) { [weak appState] notification in
+            guard let spec = notification.object as? String else { return }
+            Task { @MainActor in
+                guard let appState else { return }
+                openPreview(spec, appState: appState)
+            }
+        }
+    }
+
+    private static func openPreview(_ spec: String, appState: AppState) {
+        let parts = spec.split(separator: "|", maxSplits: 1)
+        guard parts.count == 2,
+              case .success(let config) = appState.configStore.lastResult,
+              let machine = config.machines.first(where: { $0.name == String(parts[0]) })
+        else { return }
+        appState.openPreviewWindow(machine: machine, path: String(parts[1]))
     }
 
     private static func captureWindows(to dir: String) {

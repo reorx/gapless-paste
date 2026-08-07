@@ -22,7 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appState = AppState()
         menuController = StatusMenuController(appState: appState)
         #if DEBUG
-        DebugHooks.install()
+        DebugHooks.install(appState: appState)
         #endif
         // 首启（刚写入示例模板）：打开设置窗口引导用户配置，取代旧的「打开配置文件」
         if appState.configStore.isFirstLaunch {

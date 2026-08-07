@@ -134,7 +134,12 @@ final class AppState {
         let recents = UserDefaults.standard.stringArray(forKey: recentsKey) ?? []
         guard let path = PreviewPathPrompt.run(machineName: machine.name, recentPaths: recents) else { return }
         UserDefaults.standard.set(RecentPaths.updated(recents, adding: path), forKey: recentsKey)
+        openPreviewWindow(machine: machine, path: path)
+    }
 
+    /// 开预览窗口（不弹路径输入框）。菜单路径经 previewFolder 走弹窗；
+    /// DEBUG 验收钩子（DebugHooks）直接调用本方法绕过模态弹窗
+    func openPreviewWindow(machine: Machine, path: String) {
         let controller = PreviewWindowController(
             machine: machine, path: path,
             runner: runner, builder: commandBuilder, probeService: probeService, log: log

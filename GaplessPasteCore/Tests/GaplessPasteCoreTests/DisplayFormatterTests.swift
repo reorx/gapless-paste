@@ -2,8 +2,29 @@ import Foundation
 import Testing
 @testable import GaplessPasteCore
 
-@Suite("展示格式化：字节数、相对时间")
+@Suite("展示格式化：字节数、相对时间、音频时长")
 struct DisplayFormatterTests {
+    @Test("音频时长：分:秒，秒补零，不足 1 分钟显示 0:SS")
+    func durationMinutesSeconds() {
+        #expect(DisplayFormatter.durationText(0) == "0:00")
+        #expect(DisplayFormatter.durationText(4.9) == "0:04") // 播放器惯例向下取整
+        #expect(DisplayFormatter.durationText(65) == "1:05")
+        #expect(DisplayFormatter.durationText(3599) == "59:59")
+    }
+
+    @Test("音频时长：≥1 小时显示 时:分:秒")
+    func durationHours() {
+        #expect(DisplayFormatter.durationText(3600) == "1:00:00")
+        #expect(DisplayFormatter.durationText(3723) == "1:02:03")
+    }
+
+    @Test("音频时长：NaN/无穷/负值兜底 0:00")
+    func durationInvalidValues() {
+        #expect(DisplayFormatter.durationText(.nan) == "0:00")
+        #expect(DisplayFormatter.durationText(.infinity) == "0:00")
+        #expect(DisplayFormatter.durationText(-5) == "0:00")
+    }
+
     @Test("字节数 <1024 显示为 B")
     func byteCountBytes() {
         #expect(DisplayFormatter.byteCountText(0) == "0 B")

@@ -20,6 +20,20 @@ public enum DisplayFormatter {
         fatalError("unreachable")
     }
 
+    /// 音频时长/播放进度：分:秒（秒补零），≥1 小时为 时:分:秒；
+    /// 向下取整（播放器惯例），NaN/无穷/负值兜底 0:00
+    public static func durationText(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds > 0 else { return "0:00" }
+        let total = Int(seconds)
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let secs = total % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, secs)
+        }
+        return String(format: "%d:%02d", minutes, secs)
+    }
+
     /// 相对时间：<1s（含时钟回拨）→ 刚刚；秒 → Ns前；再往上分钟/小时/天
     public static func relativeTimeText(from past: Date, to now: Date = Date()) -> String {
         let seconds = Int(now.timeIntervalSince(past))

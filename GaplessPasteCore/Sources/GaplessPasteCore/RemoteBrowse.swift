@@ -47,6 +47,7 @@ public enum RemoteBrowse {
 
 public enum PreviewKind: Equatable, Sendable {
     case image
+    case audio
     case text
 }
 
@@ -54,11 +55,18 @@ public enum FilePreview {
     /// 文本预览上限：超出只取前缀展示（避免大文件撑爆内存/UI）
     public static let maxTextPreviewBytes = 512 * 1024
 
-    /// 按扩展名判定预览类型：已知图像格式走图像渲染，其余一律按文本尝试
-    /// （SVG 是 XML 按文本；真二进制由 decodeText 的 UTF-8 校验兜底拒绝）
+    /// 可在预览窗口内播放的音频扩展名（AVAudioPlayer 可解码的常见格式；ogg/opus 不支持）
+    public static let audioFileExtensions: Set<String> = [
+        "wav", "mp3", "m4a", "aac", "flac", "aiff", "aif", "caf",
+    ]
+
+    /// 按扩展名判定预览类型：已知图像格式走图像渲染，已知音频格式走播放器，
+    /// 其余一律按文本尝试（SVG 是 XML 按文本；真二进制由 decodeText 的 UTF-8 校验兜底拒绝）
     public static func kind(forFileName name: String) -> PreviewKind {
         let ext = (name as NSString).pathExtension.lowercased()
-        return PasteboardClassifier.imageFileExtensions.contains(ext) ? .image : .text
+        if PasteboardClassifier.imageFileExtensions.contains(ext) { return .image }
+        if audioFileExtensions.contains(ext) { return .audio }
+        return .text
     }
 
     /// 解码文本预览：超限截断到 limit 字节（回退到完整 UTF-8 字符边界），

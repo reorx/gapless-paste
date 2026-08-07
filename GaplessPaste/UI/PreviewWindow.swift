@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import SwiftUI
 import GaplessPasteCore
 
@@ -37,6 +38,7 @@ final class PreviewWindowModel: ObservableObject {
     enum PreviewState {
         case loading
         case image(NSImage)
+        case audio(Data)
         case text(String, truncated: Bool)
         case binary(byteCount: Int)
         case failed(String)
@@ -325,6 +327,9 @@ final class PreviewWindowModel: ObservableObject {
         case .image:
             guard let image = NSImage(data: data) else { return .failed("图像解码失败") }
             return .image(image)
+        case .audio:
+            // 解码交给播放器视图（AVAudioPlayer），失败在分栏内展示错误
+            return .audio(data)
         case .text:
             guard let decoded = FilePreview.decodeText(data) else { return .binary(byteCount: data.count) }
             return .text(decoded.text, truncated: decoded.truncated)
@@ -558,9 +563,17 @@ private struct PreviewNodeRow: View {
                     .lineLimit(1)
             }
         } else {
-            Label(node.name, systemImage: FilePreview.kind(forFileName: node.name) == .image ? "photo" : "doc.text")
+            Label(node.name, systemImage: Self.icon(forFileName: node.name))
                 .lineLimit(1)
                 .tag(node.id)
+        }
+    }
+
+    private static func icon(forFileName name: String) -> String {
+        switch FilePreview.kind(forFileName: name) {
+        case .image: "photo"
+        case .audio: "music.note"
+        case .text: "doc.text"
         }
     }
 }
@@ -719,6 +732,9 @@ private struct PreviewPane: View {
                 .contentShape(Rectangle())
                 .gesture(magnifyGesture)
             }
+        case .audio(let data):
+            // 刷新路径必经 .loading 过渡（分支切换销毁旧视图），拿到新数据时播放器必然重建
+            AudioPreviewPane(data: data)
         case .text(let text, let truncated):
             VStack(spacing: 0) {
                 if truncated {
@@ -757,6 +773,155 @@ private struct PreviewPane: View {
             }
             .padding()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+// MARK: - 音频播放
+
+/// 单个音频文件的播放模型：AVAudioPlayer 封装。播放期间 0.1s 定时器刷新进度；
+/// 不用 AVAudioPlayerDelegate（回调线程不定），靠定时器检测播放自然结束
+@MainActor
+private final class AudioPlayerModel: ObservableObject {
+    @Published private(set) var isPlaying = false
+    @Published private(set) var currentTime: Double = 0
+    let duration: Double
+    let loadError: String?
+
+    private let player: AVAudioPlayer?
+    private var progressTimer: Timer?
+
+    init(data: Data) {
+        do {
+            let player = try AVAudioPlayer(data: data)
+            player.prepareToPlay()
+            self.player = player
+            duration = player.duration
+            loadError = nil
+        } catch {
+            player = nil
+            duration = 0
+            loadError = "音频解码失败：\(error.localizedDescription)"
+        }
+    }
+
+    deinit {
+        progressTimer?.invalidate()
+    }
+
+    func togglePlay() {
+        guard let player else { return }
+        if isPlaying {
+            player.pause()
+            isPlaying = false
+            stopTimer()
+            currentTime = player.currentTime
+        } else {
+            player.play()
+            isPlaying = true
+            startTimer()
+        }
+    }
+
+    /// 拖动进度条定位；播放中/暂停时均可
+    func seek(to time: Double) {
+        guard let player else { return }
+        let clamped = min(max(0, time), duration)
+        player.currentTime = clamped
+        currentTime = clamped
+    }
+
+    /// 分栏消失（切换文件/刷新）时停止播放
+    func stop() {
+        player?.pause()
+        isPlaying = false
+        stopTimer()
+    }
+
+    private func startTimer() {
+        progressTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+    }
+
+    private func stopTimer() {
+        progressTimer?.invalidate()
+        progressTimer = nil
+    }
+
+    private func tick() {
+        guard let player, isPlaying else { return }
+        if player.isPlaying {
+            currentTime = player.currentTime
+        } else {
+            // 播放自然结束：AVAudioPlayer 已把 currentTime 归零，再按播放从头开始
+            isPlaying = false
+            currentTime = 0
+            stopTimer()
+        }
+    }
+}
+
+/// 音频预览分栏：播放/暂停按钮 + 可拖动进度条 + 当前时间/总时长
+private struct AudioPreviewPane: View {
+    private let byteCount: Int
+    @StateObject private var player: AudioPlayerModel
+
+    init(data: Data) {
+        byteCount = data.count
+        _player = StateObject(wrappedValue: AudioPlayerModel(data: data))
+    }
+
+    var body: some View {
+        if let error = player.loadError {
+            VStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 28))
+                    .foregroundStyle(.orange)
+                Text(error)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            VStack(spacing: 16) {
+                Image(systemName: "music.note")
+                    .font(.system(size: 36))
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 10) {
+                    Button {
+                        player.togglePlay()
+                    } label: {
+                        Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                            .font(.system(size: 28))
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityIdentifier("preview-audio-play")
+                    .help(player.isPlaying ? "暂停" : "播放")
+                    Text(DisplayFormatter.durationText(player.currentTime))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                    Slider(
+                        value: Binding(
+                            get: { player.currentTime },
+                            set: { player.seek(to: $0) }
+                        ),
+                        in: 0...max(player.duration, 0.01)
+                    )
+                    .accessibilityIdentifier("preview-audio-progress")
+                    Text(DisplayFormatter.durationText(player.duration))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: 360)
+                Text(DisplayFormatter.byteCountText(byteCount))
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onDisappear { player.stop() }
         }
     }
 }

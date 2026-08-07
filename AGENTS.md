@@ -13,6 +13,7 @@ macOS 菜单栏工具：把本机剪贴板里的截图/文件/文本以最少步
 - 预览窗口打磨 ✅：侧栏宽度自绘分割条（弃 HSplitView，宽度只随用户拖动变化，不再被内容重排跳变）；图像默认 fit 模式（适应窗口、从不放大超过原图，`PreviewZoom.fitScale` 纯逻辑在 Core），工具栏加 fit 按钮回到适应窗口；顶栏「连接 Zoom」/「连接 Scroll」按钮（选中 ≥2 张图片时出现）分别同步多栏缩放与滚动位置（zoom 模式图像容器为 NSScrollView 封装 `ZoomedImageScrollView`，滚动按归一化比例同步，pinch 走 NSMagnificationGestureRecognizer）；预览路径输入弹窗展示近期路径（点击覆盖输入框，UserDefaults `previewRecentPaths.<sshAlias>` 按机器存 8 条，`RecentPaths` 纯逻辑在 Core，弹窗 UI 在 `UI/PreviewPathPrompt.swift`）
 - 同步剪贴板拆双向 ✅：每机器菜单拆成「同步到远端剪贴板 →」（原路径 B 推送）与「从远端剪贴板同步 ←」（新增拉取）：一次 ssh `osascript` try `the clipboard as «class PNGf»` 打印 `«data PNGf<hex>»` 拿图像（本机 hex 解码写回本地剪贴板，PNG+TIFF 双格式），非图像输出哨兵后回退 `pbpaste` 拉文本，空文本提示远端剪贴板为空；纯逻辑（提取命令 + 输出解析 `parseImageExtractionOutput`）在 Core `RemoteClipboard.swift`，非 Darwin 两项均置灰
 - ControlPath 目录抗 /tmp 清理 ✅：macOS 周期清理会删掉 `/tmp/gaplesspaste-<uid>`（长时间挂机后所有 ssh 报 `unix_listener: cannot bind`），改为 `SSHRunner.run` 每次执行前幂等重建（Core `SSHCommandBuilder.ensureControlPathDirectory`，0700），不再依赖启动时一次性创建
+- 预览音频文件 ✅：wav/mp3/m4a/aac/flac/aiff/caf（AVAudioPlayer 可解码集合，ogg 不支持仍按文本兜底）在分栏内播放/暂停 + 可拖动进度条 + 当前时间/总时长（`FilePreview.kind` 新增 `.audio`、`DisplayFormatter.durationText` 纯逻辑在 Core）；播放进度 0.1s 定时器刷新（不用 AVAudioPlayerDelegate，靠定时器检测自然结束并复位），切走分栏自动停播；侧栏音频文件显示音符图标
 - M4 待做：全局热键、登录启动项、浏览器拖图评估
 - 历次改动细节见 `kb/sessions/`
 
@@ -85,6 +86,12 @@ make clean       # 清理构建产物与生成的 xcodeproj
 - 现成脚本：`tmp/ax_click.applescript <id>` 点按钮；`tmp/ax_paste.applescript <id> <第几个> <文本>` 往文本框填值
 - 状态栏菜单路径：LSUIElement app 的 status item 是 `menu bar item 1 of menu bar 2 of process "GaplessPaste"`，click 展开后再 click 里面的 menu item；读菜单项标题（`name of every menu item`）可无截图验证菜单状态，`key code 53`（Esc）收起菜单
 - 操作前 `set frontmost to true`（LSUIElement app 不会自己在前台）
+
+**DEBUG 钩子：绕过 UI 直达目标状态（AX 不可靠时的兜底，`App/DebugHooks.swift`）**
+
+- 状态栏菜单项的 `click`/`AXPress` 有时静默失效（菜单开着不动、action 不触发，重试也没用），且预览入口的 NSAlert 模态弹窗又叠一层不确定性——验收要打开预览窗口时不走菜单，直接发分布式通知：`swift scripts/preview_open.swift <机器名> <远端路径>`（通知名 `com.reorx.gaplesspaste.debug.preview`，object 为 `机器名|路径`，跳过路径弹窗直接开窗）
+- 自截图钩子同理（`tmp/capture.swift <输出目录>`，见上节）；两个钩子都只在 DEBUG 构建注册，新增验收堵点时优先考虑加同类钩子而不是硬磕 AX
+- 长期有用的验收脚本放 `scripts/`（随仓库走），一次性的临时脚本才放 `tmp/`（整目录 gitignore）
 
 **必踩的坑（都已验证）**
 
