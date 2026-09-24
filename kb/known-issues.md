@@ -16,7 +16,7 @@
 
 ## 预览窗口目录导航：真实按钮 / ⌘↑ / 双击手势未经真机验收
 
-- 记录：2026-09-24（`kb/sessions/2026-09-24-preview-dir-navigation.md`；验收时屏幕锁定，AX 与鼠标事件全部无效）
+- 记录：2026-09-24（`kb/sessions/2026-09-24-preview-dir-navigation.md`；验收时屏幕锁定，用户通过 SSH 远程连接，无法解锁，按用户要求跳过）
 - 已验证（DEBUG 钩子 `scripts/preview_action.swift` + 自截图 + 日志）：向上 / 进入的模型逻辑、节点复用零 ssh、选中过滤、刷新作用于当前根、无权限目录失败提示、根 `/` 时向上置灰、窗口标题跟随
 - 未验证（解锁后逐项跑，夹具与配置见 `tmp/nav_acceptance_setup.py`）：
   - `osascript scripts/ax_press.applescript 🔍 preview-go-up` 真正触发向上
