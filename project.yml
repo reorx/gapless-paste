@@ -30,6 +30,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reorx.gaplesspaste
+        # 资源由 scripts/gen_app_icon.swift 生成（GaplessPaste/Assets.xcassets）
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: GaplessPaste/Info.plist
       properties:

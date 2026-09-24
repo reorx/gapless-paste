@@ -7,7 +7,8 @@ guard CommandLine.arguments.count >= 2 else {
     fputs("usage: swift capture.swift <output-dir>\n", stderr)
     exit(1)
 }
-let dir = CommandLine.arguments[1]
+// 相对路径按本脚本的 cwd 转绝对路径：app 由 open 启动，cwd 是 /，直接传相对路径会落到 /tmp 等意外位置
+let dir = URL(fileURLWithPath: CommandLine.arguments[1]).standardizedFileURL.path
 DistributedNotificationCenter.default().postNotificationName(
     Notification.Name("com.reorx.gaplesspaste.debug.capture"),
     object: dir,

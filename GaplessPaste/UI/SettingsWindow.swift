@@ -311,6 +311,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         if window?.isVisible != true {
             model.load(from: config)
         }
+        if let window {
+            DockPresence.track(window)
+        }
         // LSUIElement app 默认不抢焦点，必须显式激活
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)

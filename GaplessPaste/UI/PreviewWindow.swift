@@ -1080,6 +1080,7 @@ final class PreviewWindowController: NSObject, NSWindowDelegate {
         window.center()
         self.window = window
         model.start()
+        DockPresence.track(window)
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
     }

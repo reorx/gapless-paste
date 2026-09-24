@@ -14,8 +14,9 @@ macOS 菜单栏工具：把本机剪贴板里的截图/文件/文本以最少步
 - 同步剪贴板拆双向 ✅：每机器菜单拆成「同步到远端剪贴板 →」（原路径 B 推送）与「从远端剪贴板同步 ←」（新增拉取）：一次 ssh `osascript` try `the clipboard as «class PNGf»` 打印 `«data PNGf<hex>»` 拿图像（本机 hex 解码写回本地剪贴板，PNG+TIFF 双格式），非图像输出哨兵后回退 `pbpaste` 拉文本，空文本提示远端剪贴板为空；纯逻辑（提取命令 + 输出解析 `parseImageExtractionOutput`）在 Core `RemoteClipboard.swift`，非 Darwin 两项均置灰
 - ControlPath 目录抗 /tmp 清理 ✅：macOS 周期清理会删掉 `/tmp/gaplesspaste-<uid>`（长时间挂机后所有 ssh 报 `unix_listener: cannot bind`），改为 `SSHRunner.run` 每次执行前幂等重建（Core `SSHCommandBuilder.ensureControlPathDirectory`，0700），不再依赖启动时一次性创建
 - 预览音频文件 ✅：wav/mp3/m4a/aac/flac/aiff/caf（AVAudioPlayer 可解码集合，ogg 不支持仍按文本兜底）在分栏内播放/暂停 + 可拖动进度条 + 当前时间/总时长（`FilePreview.kind` 新增 `.audio`、`DisplayFormatter.durationText` 纯逻辑在 Core）；播放进度 0.1s 定时器刷新（不用 AVAudioPlayerDelegate，靠定时器检测自然结束并复位），切走分栏自动停播；侧栏音频文件显示音符图标
+- 窗口打开时以 Dock app 形式存在 ✅：预览/设置窗口开着时 activation policy 切 `.regular`（Dock 图标 + 主菜单栏 + ⌘Tab + ⌘` 切窗），最后一个关闭后退回 `.accessory`（`App/DockPresence.swift` 追踪窗口，按最近使用排序）；点 Dock 且窗口全部最小化时恢复最近使用的那个（`applicationShouldHandleReopen`）；主菜单「设置… ⌘,」转发到真正的设置窗口（原默认项会打开空 Settings 场景），去掉空 Help 菜单；AppIcon 由 `scripts/gen_app_icon.swift` 生成（与状态栏同款 SF Symbol，产物入库）
 - M4 待做：全局热键、登录启动项、浏览器拖图评估
-- 历次改动细节见 `kb/sessions/`
+- 历次改动细节见 `kb/sessions/`；未解决问题与未验收项见 `kb/known-issues.md`
 
 ## 技术栈
 
@@ -57,6 +58,7 @@ make clean       # 清理构建产物与生成的 xcodeproj
 - Debug 签名身份由 `Config/Local.xcconfig`（gitignore）提供；新机器初始化：装好 Apple Development 证书后 `cp Config/Local.xcconfig.example Config/Local.xcconfig` 填 Team ID（从证书提取：`security find-certificate -c "Apple Development" -p | openssl x509 -noout -subject`，取 OU 字段）；无证书时回落 ad-hoc 签名，能构建但 TCC 会反复弹窗
 - 签名身份变更后用 `tccutil reset <服务名> com.reorx.gaplesspaste` 清掉旧授权再重新授权
 - Release 必须 Developer ID Application + hardened runtime + notarytool 公证
+- App 图标：`swift scripts/gen_app_icon.swift` 重新生成 `GaplessPaste/Assets.xcassets/AppIcon.appiconset`（project.yml 设 `ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon`）；Dock 仍显示旧图标时 `lsregister -f <app 路径>` 刷新 LaunchServices 缓存
 
 ## CI
 
@@ -94,7 +96,10 @@ make clean       # 清理构建产物与生成的 xcodeproj
 | `menu_read.applescript` | 读状态栏菜单全部项标题（不截图核对菜单状态） |
 | `menu_click.applescript <标题> <第几个>` | 点状态栏菜单项（同名项每机器一个，用序号区分） |
 | `capture.swift <输出目录>` | 触发 app 自截图（见上节） |
+| `screen_locked.swift` | 打印 `locked`/`unlocked`：锁屏时 AX 看不到窗口、按键到不了 app，验收前先查 |
 | `preview_open.swift <机器名> <路径>` | 直接开预览窗口（见下节 DEBUG 钩子） |
+| `ax_focused_window.applescript` | 打印 app 是否前台 + 当前焦点窗口标题（核对 ⌘` / Dock 点击后的焦点落点） |
+| `dock_click.applescript [check]` | 点 Dock 里的 GaplessPaste 图标；传 `check` 只返回 `present`/`absent`（判断 Dock 图标是否显示） |
 
 - 给可交互控件埋 `.accessibilityIdentifier("xxx")`（映射为 AXIdentifier）才能被上述脚本定位
 - 状态栏菜单路径：LSUIElement app 的 status item 是 `menu bar item 1 of menu bar 2 of process "GaplessPaste"`，`key code 53`（Esc）收起菜单
@@ -107,6 +112,7 @@ make clean       # 清理构建产物与生成的 xcodeproj
 
 **必踩的坑（都已验证）**
 
+- **锁屏会让 AX/按键验收全部假失败**：`windows of process` 返回空、`lsappinfo front` 是 loginwindow、按键不达 app；自截图和 `lsappinfo info` 仍正常。跑 AX 前先 `swift scripts/screen_locked.swift`
 - `entire contents of window` **在深层 SwiftUI 树上会静默返回空集合**（窗口明明有子元素，count 却是 0，且稳定复现不是偶发）——所有查找一律自己递归下降 `UI elements of`，`scripts/ax_*.applescript` 已是这个写法；`whose` 子句不递归，同样别指望
 - AppleScript 保留字会毒化变量名：拼接缓冲别叫 `line`，也别叫 `outLine`（会被解析成 `outline`），赋值直接报 `-10003 Access not allowed`——用 `buf` 这类无歧义的名字
 - SwiftUI TextField 直接 `set value of text field`（AXValue）只改显示、**不触发 binding**，数据不会真正变化——必须发真实键盘事件
