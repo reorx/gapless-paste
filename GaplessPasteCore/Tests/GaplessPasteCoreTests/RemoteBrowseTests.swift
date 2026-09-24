@@ -47,6 +47,64 @@ struct RemoteBrowseTests {
         #expect(RemoteBrowse.joinPath("/", "etc") == "/etc")
     }
 
+    // MARK: - 目录导航（向上 / 进入子目录）
+
+    @Test func normalizedDirectoryPathStripsTrailingSlash() {
+        #expect(RemoteBrowse.normalizedDirectoryPath("/home/me/") == "/home/me")
+        #expect(RemoteBrowse.normalizedDirectoryPath("/home/me") == "/home/me")
+    }
+
+    @Test func normalizedDirectoryPathKeepsFilesystemRoot() {
+        #expect(RemoteBrowse.normalizedDirectoryPath("/") == "/")
+        #expect(RemoteBrowse.normalizedDirectoryPath("//") == "/")
+    }
+
+    @Test func normalizedDirectoryPathCollapsesRepeatedSlashes() {
+        #expect(RemoteBrowse.normalizedDirectoryPath("//a//b/") == "/a/b")
+    }
+
+    @Test func normalizedDirectoryPathMatchesJoinedChildPath() {
+        // 父目录列表生成的子节点 id 与规范化后的根 id 必须一致，导航时才能复用节点
+        let root = RemoteBrowse.normalizedDirectoryPath("/home/me/proj/")
+        #expect(RemoteBrowse.joinPath("/home/me", "proj") == root)
+    }
+
+    @Test func parentPathOfNestedDirectory() {
+        #expect(RemoteBrowse.parentPath("/home/me/proj") == "/home/me")
+        #expect(RemoteBrowse.parentPath("/home/me/") == "/home")
+    }
+
+    @Test func parentPathOfTopLevelDirectoryIsRoot() {
+        #expect(RemoteBrowse.parentPath("/home") == "/")
+    }
+
+    @Test func parentPathOfRootIsNil() {
+        #expect(RemoteBrowse.parentPath("/") == nil)
+    }
+
+    @Test func parentPathOfRelativePathIsNil() {
+        // 相对路径无法可靠推出上级（~ 展开失败时才会出现），向上按钮置灰
+        #expect(RemoteBrowse.parentPath("foo/bar") == nil)
+        #expect(RemoteBrowse.parentPath("") == nil)
+    }
+
+    @Test func isPathInsideDirectory() {
+        #expect(RemoteBrowse.isPath("/a/b/c.txt", inside: "/a"))
+        #expect(RemoteBrowse.isPath("/a/b/c.txt", inside: "/a/b"))
+        #expect(RemoteBrowse.isPath("/a/b/c.txt", inside: "/a/b/"))
+    }
+
+    @Test func isPathInsideDoesNotMatchSiblingWithSharedPrefix() {
+        #expect(!RemoteBrowse.isPath("/ab/c", inside: "/a"))
+        #expect(!RemoteBrowse.isPath("/a", inside: "/a"))
+        #expect(!RemoteBrowse.isPath("/x/y", inside: "/a"))
+    }
+
+    @Test func isPathInsideFilesystemRootMatchesEverything() {
+        #expect(RemoteBrowse.isPath("/etc/hosts", inside: "/"))
+        #expect(RemoteBrowse.isPath("/a", inside: "/"))
+    }
+
     // MARK: - 预览类型判定（扩展名，大小写不敏感）
 
     @Test func previewKindImageByExtension() {

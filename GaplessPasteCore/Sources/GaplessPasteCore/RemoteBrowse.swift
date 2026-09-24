@@ -43,6 +43,30 @@ public enum RemoteBrowse {
         }
         return directory + "/" + name
     }
+
+    /// 目录路径规范化：折叠连续 /、去掉尾随 /（根 / 保持不变）。
+    /// 树节点 id 以此为准，保证输入路径与父目录列表拼出的子路径一致（导航复用节点）
+    public static func normalizedDirectoryPath(_ path: String) -> String {
+        let components = path.split(separator: "/", omittingEmptySubsequences: true)
+        let joined = components.joined(separator: "/")
+        guard path.hasPrefix("/") else { return joined }
+        return "/" + joined
+    }
+
+    /// 上一级目录；根 / 与相对路径返回 nil（无法向上）
+    public static func parentPath(_ path: String) -> String? {
+        let normalized = normalizedDirectoryPath(path)
+        guard normalized.hasPrefix("/"), normalized != "/" else { return nil }
+        let parent = (normalized as NSString).deletingLastPathComponent
+        return parent.isEmpty ? "/" : parent
+    }
+
+    /// path 是否位于 directory 之下（不含 directory 自身；按路径段判断，/ab 不在 /a 之下）
+    public static func isPath(_ path: String, inside directory: String) -> Bool {
+        let base = normalizedDirectoryPath(directory)
+        let prefix = base == "/" ? "/" : base + "/"
+        return path.hasPrefix(prefix) && path.count > prefix.count
+    }
 }
 
 public enum PreviewKind: Equatable, Sendable {

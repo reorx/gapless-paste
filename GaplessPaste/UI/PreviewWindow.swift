@@ -31,6 +31,12 @@ final class PreviewNode: Identifiable, ObservableObject {
     }
 }
 
+/// 列目录失败：message 为远端 stderr 首行
+private struct ListingError: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
+}
+
 // MARK: - 窗口模型
 
 @MainActor
@@ -46,8 +52,13 @@ final class PreviewWindowModel: ObservableObject {
 
     let machine: Machine
     let requestedPath: String
+    /// 当前目录树根路径：初值为打开时输入的路径（可能含 ~），加载/导航后为规范化的绝对路径。
+    /// 刷新与错误页重试都作用于它
+    private(set) var currentPath: String
 
     @Published private(set) var root: PreviewNode?
+    /// 导航（向上 / 双击进入）正在列目录，期间不接受新的导航
+    @Published private(set) var isNavigating = false
     @Published private(set) var rootError: String?
     @Published var selection: Set<String> = []
     @Published var isPinned = false {
@@ -70,6 +81,8 @@ final class PreviewWindowModel: ObservableObject {
     @Published var linkedScrollFraction: CGPoint?
 
     var onPinChange: ((Bool) -> Void)?
+    /// 目录树根切换回调：窗口标题跟随当前根
+    var onRootChange: ((String) -> Void)?
     private var feedbackTask: Task<Void, Never>?
 
     private let runner: SSHRunner
@@ -86,6 +99,7 @@ final class PreviewWindowModel: ObservableObject {
     init(machine: Machine, path: String, runner: SSHRunner, builder: SSHCommandBuilder, probeService: ProbeService, log: LogService) {
         self.machine = machine
         self.requestedPath = path
+        self.currentPath = path
         self.runner = runner
         self.builder = builder
         self.probeService = probeService
@@ -106,7 +120,7 @@ final class PreviewWindowModel: ObservableObject {
         Task {
             do {
                 let probe = try await probeService.probe(machine.sshAlias)
-                let absolutePath = probe.expandPath(requestedPath)
+                let absolutePath = RemoteBrowse.normalizedDirectoryPath(probe.expandPath(currentPath))
                 log.info("预览远端目录：\(machine.name):\(absolutePath)")
                 let quoted = SSHCommandBuilder.shellQuote(absolutePath)
                 let command = "test -d \(quoted) && \(RemoteBrowse.listCommand(path: absolutePath))"
@@ -115,18 +129,17 @@ final class PreviewWindowModel: ObservableObject {
                     rootError = result.stderr.isEmpty ? "不是目录或不存在：\(absolutePath)" : result.firstStderrLine
                     return
                 }
-                let node = PreviewNode(path: absolutePath, name: absolutePath, isDirectory: true)
+                // name 取末段：向上导航后该节点会被复用为父目录下的子节点
+                let node = PreviewNode(path: absolutePath, name: (absolutePath as NSString).lastPathComponent, isDirectory: true)
                 node.children = makeChildren(of: node, from: result.stdout)
-                node.isExpanded = true
-                nodesByPath[node.id] = node
-                root = node
+                setRoot(node)
             } catch {
                 rootError = error.localizedDescription
             }
         }
     }
 
-    /// 刷新：重列目录树并清空内存预览状态。磁盘缓存保留（重选文件仍瞬时命中），
+    /// 刷新：重列当前根的目录树并清空内存预览状态。磁盘缓存保留（重选文件仍瞬时命中），
     /// 要强制重新下载某个文件用分栏工具栏的刷新按钮（refreshFile）
     func refresh() {
         selection = []
@@ -144,31 +157,88 @@ final class PreviewWindowModel: ObservableObject {
         Task {
             defer { node.isLoadingChildren = false }
             do {
-                let result = try await runner.run(
-                    builder.listDirectoryCommand(host: machine.sshAlias, remotePath: node.id),
-                    timeout: 30
-                )
-                guard result.succeeded else {
-                    node.childrenError = result.firstStderrLine
-                    return
-                }
-                node.children = makeChildren(of: node, from: result.stdout)
+                node.children = try await listChildren(of: node)
             } catch {
                 node.childrenError = error.localizedDescription
             }
         }
     }
 
+    /// 列目录并生成子节点（展开与导航共用）
+    private func listChildren(of node: PreviewNode) async throws -> [PreviewNode] {
+        let result = try await runner.run(
+            builder.listDirectoryCommand(host: machine.sshAlias, remotePath: node.id),
+            timeout: 30
+        )
+        guard result.succeeded else { throw ListingError(message: result.firstStderrLine) }
+        return makeChildren(of: node, from: result.stdout)
+    }
+
     private func makeChildren(of parent: PreviewNode, from listing: String) -> [PreviewNode] {
         RemoteBrowse.parseListing(listing).map { entry in
-            let node = PreviewNode(
-                path: RemoteBrowse.joinPath(parent.id, entry.name),
-                name: entry.name,
-                isDirectory: entry.isDirectory
-            )
+            let path = RemoteBrowse.joinPath(parent.id, entry.name)
+            // 已建过的节点直接复用（向上导航时旧根带着已加载子项与展开状态出现在新树里）；
+            // 刷新会清空索引，不受影响
+            if let existing = nodesByPath[path], existing.isDirectory == entry.isDirectory {
+                return existing
+            }
+            let node = PreviewNode(path: path, name: entry.name, isDirectory: entry.isDirectory)
             nodesByPath[node.id] = node
             return node
         }
+    }
+
+    // MARK: - 目录导航
+
+    var canGoUp: Bool {
+        guard let root, !isNavigating else { return false }
+        return RemoteBrowse.parentPath(root.id) != nil
+    }
+
+    /// 向上：根切换为上一级目录，旧根作为其子节点保持展开
+    func goUp() {
+        guard canGoUp, let root, let parentPath = RemoteBrowse.parentPath(root.id) else { return }
+        if let existing = nodesByPath[parentPath], existing.isDirectory {
+            enterDirectory(existing)
+        } else {
+            enterDirectory(PreviewNode(path: parentPath, name: (parentPath as NSString).lastPathComponent, isDirectory: true))
+        }
+    }
+
+    /// 把目录树根切换到该目录：已列过子项的节点瞬时切换（零 ssh），否则先列目录，成功才切换
+    func enterDirectory(_ node: PreviewNode) {
+        guard node.isDirectory, !isNavigating, let current = root, node.id != current.id else { return }
+        if node.children != nil {
+            setRoot(node)
+            return
+        }
+        isNavigating = true
+        Task {
+            defer { isNavigating = false }
+            do {
+                let children = try await listChildren(of: node)
+                // 列目录期间点了刷新：树已重建，放弃这次导航
+                guard root === current else { return }
+                node.children = children
+                setRoot(node)
+            } catch {
+                showFeedback("无法进入 \(node.name)：\(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// 切换目录树根。选中集合只保留仍在新根之下的文件；
+    /// previews / downloadedFiles / imageZoom 以绝对路径为 key，导航时不清空
+    private func setRoot(_ node: PreviewNode) {
+        node.isExpanded = true
+        nodesByPath[node.id] = node
+        let kept = selection.filter { RemoteBrowse.isPath($0, inside: node.id) }
+        if kept != selection {
+            selection = kept
+        }
+        currentPath = node.id
+        root = node
+        onRootChange?(node.id)
     }
 
     /// 当前选中的文件（过滤掉目录），按路径稳定排序供分栏展示
@@ -399,10 +469,23 @@ struct PreviewWindowView: View {
 
     private var topBar: some View {
         HStack(spacing: 8) {
-            Label("\(model.machine.name) : \(model.root?.id ?? model.requestedPath)", systemImage: "folder.badge.gearshape")
+            Label("\(model.machine.name) : \(model.currentPath)", systemImage: "folder.badge.gearshape")
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .foregroundStyle(.secondary)
+            Button {
+                model.goUp()
+            } label: {
+                Image(systemName: "arrow.up")
+            }
+            .disabled(!model.canGoUp)
+            .keyboardShortcut(.upArrow, modifiers: .command)
+            .accessibilityIdentifier("preview-go-up")
+            .help("上一级目录（⌘↑）")
+            if model.isNavigating {
+                ProgressView()
+                    .controlSize(.small)
+            }
             Spacer()
             if let feedback = model.actionFeedback {
                 Text(feedback)
@@ -528,7 +611,7 @@ struct PreviewWindowView: View {
     }
 }
 
-/// 目录树的一行：目录用 DisclosureGroup 递归展开（首次展开触发懒加载），文件行可选中
+/// 目录树的一行：目录用 DisclosureGroup 递归展开（首次展开触发懒加载），双击进入；文件行可选中
 private struct PreviewNodeRow: View {
     @ObservedObject var node: PreviewNode
     let model: PreviewWindowModel
@@ -559,8 +642,13 @@ private struct PreviewNodeRow: View {
                     Text("加载中…").foregroundStyle(.tertiary)
                 }
             } label: {
+                // 整行可点：双击把目录树根切到该目录（目录行不打 tag、不可选中，不与单击选中冲突）
                 Label(node.name, systemImage: "folder")
                     .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2) { model.enterDirectory(node) }
+                    .help("双击进入该目录")
             }
         } else {
             Label(node.name, systemImage: Self.icon(forFileName: node.name))
@@ -1067,12 +1155,20 @@ final class PreviewWindowController: NSObject, NSWindowDelegate {
         model.onPinChange = { [weak self] pinned in
             self?.window?.level = pinned ? .floating : .normal
         }
+        model.onRootChange = { [weak self] path in
+            guard let self else { return }
+            window?.title = windowTitle(path: path)
+        }
+    }
+
+    private func windowTitle(path: String) -> String {
+        "🔍 \(model.machine.name) : \(path)"
     }
 
     func show() {
         let hosting = NSHostingController(rootView: PreviewWindowView(model: model))
         let window = NSWindow(contentViewController: hosting)
-        window.title = "🔍 \(model.machine.name) : \(model.requestedPath)"
+        window.title = windowTitle(path: model.requestedPath)
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.isReleasedWhenClosed = false
         window.setContentSize(NSSize(width: 860, height: 540))
@@ -1088,4 +1184,44 @@ final class PreviewWindowController: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         onClose?()
     }
+
+    #if DEBUG
+    func debugPerform(_ command: String) {
+        model.debugPerform(command)
+    }
+    #endif
 }
+
+#if DEBUG
+// DEBUG 验收钩子（App/DebugHooks.swift 转发）：锁屏等 AX 不可用时直接驱动导航/选中，
+// 状态用 dump 写进日志核对（导航是异步的，dump 要在动作完成后单独发）
+extension PreviewWindowModel {
+    /// command：up | enter|<路径> | select|<路径>[|<路径>…] | refresh | dump
+    func debugPerform(_ command: String) {
+        let parts = command.split(separator: "|").map(String.init)
+        switch parts.first {
+        case "up":
+            goUp()
+        case "enter":
+            guard parts.count > 1, let node = nodesByPath[parts[1]] else {
+                log.error("DEBUG 预览动作：节点不存在 \(command)")
+                return
+            }
+            enterDirectory(node)
+        case "select":
+            selection = Set(parts.dropFirst())
+        case "refresh":
+            refresh()
+        case "dump":
+            // 只列前 30 项，避免大目录刷屏
+            let children = (root?.children ?? []).prefix(30).map { node in
+                guard node.isDirectory else { return node.name }
+                return node.isExpanded ? "\(node.name)/[展开:\(node.children?.count ?? -1)]" : "\(node.name)/"
+            }
+            log.info("DEBUG 预览状态：root=\(root?.id ?? "nil") currentPath=\(currentPath) canGoUp=\(canGoUp) isNavigating=\(isNavigating) selection=\(selection.sorted()) selectedFiles=\(selectedFiles.map(\.id)) feedback=\(actionFeedback ?? "nil") children=\(children)")
+        default:
+            log.error("DEBUG 预览动作：未知指令 \(command)")
+        }
+    }
+}
+#endif

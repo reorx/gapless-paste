@@ -14,6 +14,9 @@ import AppKit
 //
 // 预览窗口钩子（绕过模态路径弹窗，AX 驱动 NSAlert 不可靠）：
 //   通知名 com.reorx.gaplesspaste.debug.preview，object = "<机器名>|<远端路径>"
+//
+// 预览窗口动作钩子（锁屏等 AX 不可用时驱动最近打开的预览窗口，指令见 PreviewWindowModel.debugPerform）：
+//   通知名 com.reorx.gaplesspaste.debug.preview-action，object = "up" / "enter|<路径>" / "select|<路径>…" / "refresh" / "dump"
 
 @MainActor
 enum DebugHooks {
@@ -36,6 +39,14 @@ enum DebugHooks {
                 guard let appState else { return }
                 openPreview(spec, appState: appState)
             }
+        }
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("com.reorx.gaplesspaste.debug.preview-action"),
+            object: nil,
+            queue: .main
+        ) { [weak appState] notification in
+            guard let command = notification.object as? String else { return }
+            Task { @MainActor in appState?.latestPreviewController?.debugPerform(command) }
         }
     }
 

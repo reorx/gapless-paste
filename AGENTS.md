@@ -15,6 +15,7 @@ macOS 菜单栏工具：把本机剪贴板里的截图/文件/文本以最少步
 - ControlPath 目录抗 /tmp 清理 ✅：macOS 周期清理会删掉 `/tmp/gaplesspaste-<uid>`（长时间挂机后所有 ssh 报 `unix_listener: cannot bind`），改为 `SSHRunner.run` 每次执行前幂等重建（Core `SSHCommandBuilder.ensureControlPathDirectory`，0700），不再依赖启动时一次性创建
 - 预览音频文件 ✅：wav/mp3/m4a/aac/flac/aiff/caf（AVAudioPlayer 可解码集合，ogg 不支持仍按文本兜底）在分栏内播放/暂停 + 可拖动进度条 + 当前时间/总时长（`FilePreview.kind` 新增 `.audio`、`DisplayFormatter.durationText` 纯逻辑在 Core）；播放进度 0.1s 定时器刷新（不用 AVAudioPlayerDelegate，靠定时器检测自然结束并复位），切走分栏自动停播；侧栏音频文件显示音符图标
 - 窗口打开时以 Dock app 形式存在 ✅：预览/设置窗口开着时 activation policy 切 `.regular`（Dock 图标 + 主菜单栏 + ⌘Tab + ⌘` 切窗），最后一个关闭后退回 `.accessory`（`App/DockPresence.swift` 追踪窗口，按最近使用排序）；点 Dock 且窗口全部最小化时恢复最近使用的那个（`applicationShouldHandleReopen`）；主菜单「设置… ⌘,」转发到真正的设置窗口（原默认项会打开空 Settings 场景），去掉空 Help 菜单；AppIcon 由 `scripts/gen_app_icon.swift` 生成（与状态栏同款 SF Symbol，产物入库）
+- 预览窗口自由进出目录 ✅：顶栏路径右侧「↑」按钮（⌘↑，`preview-go-up`）把目录树根切到上一级，双击目录行把根切到该目录；导航复用已加载节点（向上时旧根作为展开的子节点出现、选中文件与预览保留；已列过的目录进出零 ssh），进入子目录时选中集合只保留新根之下的文件；刷新/重试作用于当前根，窗口标题跟随当前根；入口路径规范化（去尾随 `/`、折叠 `//`），根 `/` 与相对路径不可向上；纯逻辑（`normalizedDirectoryPath` / `parentPath` / `isPath(_:inside:)`）在 Core `RemoteBrowse.swift`
 - M4 待做：全局热键、登录启动项、浏览器拖图评估
 - 历次改动细节见 `kb/sessions/`；未解决问题与未验收项见 `kb/known-issues.md`
 
@@ -100,6 +101,9 @@ make clean       # 清理构建产物与生成的 xcodeproj
 | `preview_open.swift <机器名> <路径>` | 直接开预览窗口（见下节 DEBUG 钩子） |
 | `ax_focused_window.applescript` | 打印 app 是否前台 + 当前焦点窗口标题（核对 ⌘` / Dock 点击后的焦点落点） |
 | `dock_click.applescript [check]` | 点 Dock 里的 GaplessPaste 图标；传 `check` 只返回 `present`/`absent`（判断 Dock 图标是否显示） |
+| `ax_double_click.applescript <窗口> <行文本>` | 双击 List 里某行的文本（如预览目录树的文件夹 → 进入该目录）：AX 取元素中心坐标后调 `mouse_double_click.swift`。会真实移动鼠标（结束移回），行须在屏幕上可见 |
+| `mouse_double_click.swift <x> <y>` | 在全局屏幕坐标发 CGEvent 双击（第二击 `clickState=2`）；AppleScript 的 click 发不出双击，SwiftUI `onTapGesture(count: 2)` 收不到 |
+| `preview_action.swift '<指令>'` | DEBUG 钩子驱动最近打开的预览窗口：`up` / `enter\|<路径>` / `select\|<路径>…` / `refresh` / `dump`（状态写日志，grep「DEBUG 预览状态」）；锁屏时验模型逻辑用 |
 
 - 给可交互控件埋 `.accessibilityIdentifier("xxx")`（映射为 AXIdentifier）才能被上述脚本定位
 - 状态栏菜单路径：LSUIElement app 的 status item 是 `menu bar item 1 of menu bar 2 of process "GaplessPaste"`，`key code 53`（Esc）收起菜单
@@ -109,6 +113,8 @@ make clean       # 清理构建产物与生成的 xcodeproj
 
 - 状态栏菜单项的 `click`/`AXPress` 有时静默失效（菜单开着不动、action 不触发，重试也没用），且预览入口的 NSAlert 模态弹窗又叠一层不确定性——验收要打开预览窗口时不走菜单，直接发分布式通知：`swift scripts/preview_open.swift <机器名> <远端路径>`（通知名 `com.reorx.gaplesspaste.debug.preview`，object 为 `机器名|路径`，跳过路径弹窗直接开窗）
 - 自截图钩子同理（通知名 `com.reorx.gaplesspaste.debug.capture`）；两个钩子都只在 DEBUG 构建注册，新增验收堵点时优先考虑加同类钩子而不是硬磕 AX
+- 预览窗口动作钩子（通知名 `com.reorx.gaplesspaste.debug.preview-action`，`scripts/preview_action.swift`）：锁屏时 AX 全失效，靠它驱动导航/选中/刷新并 `dump` 状态到日志核对；导航是异步的，`dump` 要等动作完成后单独发
+- 验收要一台可控的"远端"时用 `localhost`（本机开了远程登录，`ssh localhost` 可达）：备份 `config.json` 后临时加一台 `sshAlias: localhost` 的机器，`make run` 重启即加载，验完恢复备份
 
 **必踩的坑（都已验证）**
 

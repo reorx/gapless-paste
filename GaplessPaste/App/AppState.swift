@@ -151,6 +151,11 @@ final class AppState {
         controller.show()
     }
 
+    #if DEBUG
+    /// DEBUG 验收钩子用：最近打开的预览窗口
+    var latestPreviewController: PreviewWindowController? { previewControllers.last }
+    #endif
+
     func copyLastRemotePaths() {
         guard !lastRemotePaths.isEmpty else { return }
         pasteboard.writeText(lastRemotePaths.joined(separator: "\n"))
