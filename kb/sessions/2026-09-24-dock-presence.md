@@ -11,6 +11,8 @@ tags:
 
 # 预览/设置窗口打开时以 Dock app 形式存在 + 生成 AppIcon
 
+> **更正（2026-09-28）**：文中说的「屏幕锁定、无法解锁」是误判。本机已关掉锁屏，当时屏幕只是熄着（监控指标显示键鼠已闲置 4 小时）；熄屏时锁定标志同样置位、AX 同样失效，跑一次 `wake-screen` 即可恢复，不需要人来解锁。详见 [UI 自动化验收手册](../docs/ui-acceptance.md)「熄屏看起来和锁屏一模一样」。
+
 ## 概要
 
 GaplessPaste 是 LSUIElement 菜单栏 app（`.accessory`），预览远端目录窗口可以多开，但它们没有 Dock 图标、不进 ⌘Tab，被别的 app 盖住后只能回状态栏菜单去找。本次新增 `DockPresence`：追踪普通窗口（预览窗口和设置窗口），只要还有一个开着，就把 activation policy 切成 `.regular`，这样有 Dock 图标、主菜单栏，能进 ⌘Tab，也能用 ⌘\` 切窗口。最后一个窗口关掉后，下一轮 runloop 退回 `.accessory`。窗口全部最小化时点 Dock，会恢复最近使用的那个。切到 regular 后会露出 SwiftUI 默认主菜单，其中「Settings… ⌘,」会打开空的 `Settings { EmptyView() }` 场景，这是个潜伏 bug，本次改为转发到真正的设置窗口，同时去掉了空的 Help 菜单。app 原本没有图标，新增 `scripts/gen_app_icon.swift`，按像素渲染蓝色渐变底板加白色 SF Symbol（与状态栏同款），产物入库。已验证：Core 138 个测试通过，构建没有警告，bundle 里有 `AppIcon.icns` 和 `CFBundleIconName`，LaunchServices 读到了新图标；真机上启动时是 UIElement、Dock 没有图标，开 3 个预览窗口后变成 Foreground、Dock 出现图标。这时发现屏幕是锁定的，用户又是 SSH 远程连进来、没法解锁，其余需要交互的验收（⌘\`、点 Dock、主菜单、关窗退回、⌘C 回归）按用户要求跳过，已登记到 known-issues。

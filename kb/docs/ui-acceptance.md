@@ -16,9 +16,9 @@ tags:
 
 | 通道 | 用途 | 前提 |
 | --- | --- | --- |
-| AppleScript AX（`scripts/ax_*.applescript`、`menu_*.applescript`） | 点按钮、填文本、选行、读菜单 | 终端有 Accessibility 授权（iTerm2 已有）；屏幕未锁定 |
-| app 自截图（`scripts/capture.swift`） | 截 app 自己的窗口 | 仅 DEBUG 构建；不需要任何 TCC 授权，锁屏和 SSH 远程会话下也能用 |
-| DEBUG 钩子（`scripts/preview_open.swift`、`preview_action.swift`） | 绕过菜单和弹窗直达目标状态 | 仅 DEBUG 构建；锁屏下也能用 |
+| AppleScript AX（`scripts/ax_*.applescript`、`menu_*.applescript`） | 点按钮、填文本、选行、读菜单 | 终端有 Accessibility 授权（iTerm2 已有）；屏幕亮着 |
+| app 自截图（`scripts/capture.swift`） | 截 app 自己的窗口 | 仅 DEBUG 构建；不需要任何 TCC 授权，熄屏和 SSH 远程会话下也能用 |
+| DEBUG 钩子（`scripts/preview_open.swift`、`preview_action.swift`） | 绕过菜单和弹窗直达目标状态 | 仅 DEBUG 构建；熄屏下也能用 |
 | `screencapture` | 截整个屏幕或菜单栏 | 只在本机 iTerm2 会话里可用（2026-09-28 实测）；屏幕熄着时截到的是黑图 |
 | `cua-computer-use` MCP | 通用的后台 GUI 自动化 | CuaDriver 已有 Accessibility 和 Screen Recording 授权；**尚未在本项目验证过** |
 
@@ -28,11 +28,27 @@ tags:
 
 ## 验收前检查
 
-1. **屏幕状态**：本机 20 分钟无操作自动熄屏。截屏或 GUI 操作前先跑 `wake-screen`（全局约定见 `~/.claude/docs/DESKTOP_APP_TESTING.md`）；长验收用 `caffeinate -d -t 1800` 保持亮屏
-2. **是否锁屏**：`swift scripts/screen_locked.swift` 打印 `locked` / `unlocked`。锁屏时 AX 看不到窗口、按键和鼠标事件到不了 app，所有 AX 类验收都会假失败；自截图和 DEBUG 钩子不受影响
+1. **唤醒屏幕**：跑 `wake-screen`，它确认屏幕可用后才退出 0。长验收用 `caffeinate -d -t 1800` 保持亮屏
+2. **确认可操作**：`swift scripts/screen_locked.swift` 应打印 `unlocked`
 3. **备份**：将被改动的真实数据（如 `config.json`）和用户剪贴板（`pbpaste`）
 
-锁屏且无法解锁时：用 DEBUG 钩子 + 自截图 + 日志把模型逻辑验完，需要真实点击、按键、手势的项登记到 `kb/known-issues.md`，不要挂着等解锁。
+### 熄屏看起来和锁屏一模一样
+
+本机关掉了锁屏（`sysadminctl -screenLock status` 为 `off`），屏幕 20 分钟无操作自动熄灭。熄屏不需要密码就能唤醒，但在熄着的这段时间里，系统的表现和真锁屏完全相同（2026-09-28 实测）：
+
+| | 屏幕亮着 | 屏幕熄着 |
+| --- | --- | --- |
+| `screen_locked.swift` | `unlocked` | `locked`（熄屏后 1 秒内置位） |
+| 前台 app（`lsappinfo front`） | 正常 | `loginwindow` |
+| AX 读 app 的窗口 | 正常 | 数量为 0 |
+| 按键、鼠标事件 | 正常 | 到不了 app |
+| AX 读状态栏菜单项、自截图、DEBUG 钩子 | 正常 | 正常 |
+
+`wake-screen` 之后 1 秒内全部恢复，SSH 远程会话里同样有效。所以看到 `locked` 不代表需要人来解锁，**先 `wake-screen` 再判断**。
+
+`wake-screen` 之后仍是 `locked` 才是真锁屏。可能的原因：有人手动锁了屏（⌃⌘Q）、重启后停在 FileVault 登录界面、锁屏配置被改了回去（用 `sysadminctl -screenLock status` 查）。真锁屏需要人来解，这时用 DEBUG 钩子 + 自截图 + 日志把模型逻辑验完，需要真实点击、按键、手势的项登记到 `kb/known-issues.md`，不要挂着等。
+
+本机熄屏与唤醒方案的来龙去脉见 `~/Documents/macos-monitoring/kb/docs/screen-sleep-and-unlock.md`。
 
 ## 脚本
 
@@ -54,7 +70,7 @@ tags:
 | `capture.swift <输出目录>` | 触发自截图，每个可见窗口输出一张 `window-<n>-<标题>.png`（含标题栏） |
 | `preview_open.swift <机器名> <路径>` | 直接打开预览窗口，跳过菜单和路径弹窗 |
 | `preview_action.swift '<指令>'` | 驱动最近打开的预览窗口：`up`、`enter\|<路径>`、`select\|<路径>…`、`refresh`、`dump` |
-| `screen_locked.swift` | 打印是否锁屏 |
+| `screen_locked.swift` | 打印 `locked` / `unlocked`。熄屏时也打印 `locked`，先 `wake-screen` 再跑 |
 
 长期有用的验收脚本放 `scripts/`（入库），一次性的探索脚本放 `tmp/`（不入库）。
 
@@ -71,7 +87,7 @@ app 的 DEBUG 构建监听三个分布式通知，上面的 Swift 脚本就是�
 什么时候用钩子而不是 AX：
 
 - **打开预览窗口**：状态栏菜单项的点击有时静默失效（菜单开着不动，重试也没用），预览入口还叠了一层模态路径弹窗。验收要开预览窗口时直接用 `preview_open.swift`
-- **锁屏**：用 `preview_action.swift` 驱动导航、选中、刷新，再发 `dump` 把窗口状态写进日志核对（在日志里找「DEBUG 预览状态」）。导航是异步的，`dump` 要等动作完成后单独发
+- **只验模型逻辑，或遇到真锁屏**：用 `preview_action.swift` 驱动导航、选中、刷新，再发 `dump` 把窗口状态写进日志核对（在日志里找「DEBUG 预览状态」）。导航是异步的，`dump` 要等动作完成后单独发
 
 遇到新的验收堵点，优先加一个同类钩子，不要硬磕 AX。
 

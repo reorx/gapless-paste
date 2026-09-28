@@ -48,9 +48,9 @@ make clean       # 清理构建产物与生成的 xcodeproj
 
 ## 签名
 
-- Bundle ID `com.reorx.gaplesspaste`。**不要改 bundle ID 和签名身份**：系统的 TCC 授权与两者绑定，改了会被重置
-- Debug 签名身份来自 `Config/Local.xcconfig`（不入库）；新机器按 `Config/Local.xcconfig.example` 里的说明创建。没有它时回落 ad-hoc 签名，能构建但授权会反复失效
-- 签名身份变更后：`tccutil reset <服务名> com.reorx.gaplesspaste` 清掉旧授权
+- Bundle ID `com.reorx.gaplesspaste`，**不要改**：通知授权、UserDefaults（探测缓存、近期路径）、DEBUG 钩子的通知名和验收脚本都绑定它
+- app 不沙箱（要启动 ssh/scp 子进程、读 `~/.ssh`），目前也不使用任何受 TCC 保护的能力（辅助功能、录屏、麦克风都没有）。将来加入这类功能（如全局热键）后，签名身份一变授权就会失效，届时需要固定身份并用 `tccutil reset <服务名> com.reorx.gaplesspaste` 清旧授权
+- Debug 签名身份来自 `Config/Local.xcconfig`（不入库）；新机器按 `Config/Local.xcconfig.example` 里的说明创建。没有它时回落 ad-hoc 签名，照常构建
 - 正式发布需要 Developer ID Application 签名 + hardened runtime + notarytool 公证；目前 CI 产物是无签名的
 - App 图标由 `swift scripts/gen_app_icon.swift` 生成到 `GaplessPaste/Assets.xcassets/`（产物入库）；Dock 仍显示旧图标时 `lsregister -f <app 路径>`
 
@@ -66,10 +66,10 @@ make clean       # 清理构建产物与生成的 xcodeproj
 
 ## UI 验收
 
-- 截 app 窗口用自截图：`swift scripts/capture.swift <输出目录>`（DEBUG 构建，零 TCC 授权，锁屏和 SSH 会话下也可用）
+- 截 app 窗口用自截图：`swift scripts/capture.swift <输出目录>`（DEBUG 构建，零 TCC 授权，熄屏和 SSH 会话下也可用）
 - 操作界面用 `scripts/` 下的 AX 脚本；写新 AX 脚本前先跑 `ax_dump.applescript` 看真实结构
 - 开预览窗口不走菜单，用 `swift scripts/preview_open.swift <机器名> <路径>`
-- 操作前先 `wake-screen`，再 `swift scripts/screen_locked.swift`：锁屏时 AX、按键、鼠标全部假失败，改用 DEBUG 钩子验模型逻辑，验不了的项登记到 `kb/known-issues.md`
+- 操作前先 `wake-screen`：本机没有锁屏、只会熄屏，但熄屏时 `screen_locked.swift` 同样打印 `locked`，AX、按键、鼠标全部假失败，唤醒后即恢复（SSH 会话里也有效）。唤醒后仍是 `locked` 才是真锁屏，那时改用 DEBUG 钩子验模型逻辑，验不了的项登记到 `kb/known-issues.md`
 - `ax_fill` 会覆盖剪贴板，操作前备份、结束后恢复
 - 不要为验收安装新的自动化工具（需要用户手动过 TCC 授权）
 - 长期有用的验收脚本放 `scripts/`，一次性脚本放 `tmp/`；截图归档到 `tmp/<日期>-<任务名>/`

@@ -40,6 +40,6 @@ targets:
     entitlements:
       path: GaplessPaste/GaplessPaste.entitlements
       properties:
-        # 非沙箱：CGEventTap / AX 注入等系统级能力与沙箱不兼容；
-        # 若 app 不需要这些能力且计划上 App Store，改为 true
+        # 非沙箱：app 要启动系统 ssh/scp 子进程、读 ~/.ssh 下的配置与密钥、
+        # 在 /tmp 放 ControlMaster socket，都与沙箱不兼容
         com.apple.security.app-sandbox: false
