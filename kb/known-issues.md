@@ -6,7 +6,7 @@
 
 - 记录：2026-09-24（`kb/sessions/2026-09-24-dock-presence.md`；验收时屏幕锁定，用户通过 SSH 远程连接，无法解锁，按用户要求跳过）
 - 已验证：启动时为 UIElement，Dock 中没有图标；打开预览窗口后变为 Foreground，Dock 出现图标；bundle 图标生效。
-- 未验证（逐项在解锁的会话里跑，脚本见 AGENTS.md 脚本表）：
+- 未验证（逐项在解锁的会话里跑，脚本见 `kb/docs/ui-acceptance.md` 脚本表）：
   - ⌘\` 在多个预览窗口之间轮转，加 ⇧ 反向（`key code 50 using command down`，每次按完读 `ax_focused_window.applescript`）。如果不生效，退路是在 `.commands` 里加 `CommandGroup(after: .windowList)`，按被追踪的窗口循环切换
   - 焦点在别的 app 时 `dock_click.applescript`，GaplessPaste 应成为 frontmost；窗口全部设为 `AXMinimized` 后再点 Dock，最近用过的窗口应被恢复并获得焦点（依赖 SwiftUI 把 `applicationShouldHandleReopen` 转发给 `AppDelegate`）
   - 主菜单（`menu bar 1`）里有「设置…」、没有 Help；按 ⌘, 打开的是「GaplessPaste 设置」，不是无标题的空窗口
