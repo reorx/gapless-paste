@@ -87,7 +87,7 @@ make release-local     # 以上四步连跑，不上传、不改 tap（本机约
 
 - **只有 homebrew job 失败**（deploy key 失效、tap 冲突）：修好后在 Actions 页面 Re-run failed jobs。它只读已发布的 Release，不会重新签名公证
 - **release job 失败**：看日志里的步骤。公证被拒时脚本会自动打印 `notarytool log`。修好后删掉 tag 重打：`git push --delete origin vX.Y.Z && git tag -d vX.Y.Z`，前提是 Release 还没建出来
-- **staple 报 Error 68 / network connection was lost**：从 Apple CloudKit 取票据时的网络抖动，`notarize.sh` 已重试 5 次；仍失败就 Re-run failed jobs
+- **stapler 报 Error 68 / network connection was lost**：stapler 访问 Apple CloudKit 时断连，GitHub 的 macOS runner 上常见（v0.1.1 前两次 CI 都是这样挂的），`notarize.sh` 的 stapler 调用已统一重试 5 次；仍失败就 Re-run failed jobs
 - Release 已发布后发现问题，发新版本，不要替换已发布的 dmg：tap 里的 sha256 和 asset id 都绑定旧文件
 
 ## 相关文件

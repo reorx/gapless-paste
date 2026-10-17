@@ -30,16 +30,17 @@ submit() {
     fi
 }
 
-# 从 Apple 拉票据钉进产物。刚 Accepted 时票据可能还没同步到 CloudKit，CI 上也遇到过
-# 网络断开（Error 68, "The network connection was lost"），所以退避重试
-staple() {
+# stapler 的 staple 和 validate 每次都要访问 Apple 的 CloudKit。GitHub 的 macOS runner 上
+# 实测短时间内连续几次请求常有一次断连（Error 68，"The network connection was lost"），
+# 刚 Accepted 时票据也可能还没同步过去，所以统一退避重试。staple 成功时已经顺带 validate
+stapler() {
     local i
     for i in 1 2 3 4 5; do
-        xcrun stapler staple "$1" && return 0
-        echo "stapler staple 第 ${i} 次失败，$((i * 10)) 秒后重试" >&2
+        xcrun stapler "$@" && return 0
+        echo "stapler $1 第 ${i} 次失败，$((i * 10)) 秒后重试" >&2
         sleep $((i * 10))
     done
-    fail "stapler staple 失败：$1"
+    return 1
 }
 
 # Gatekeeper 评估并要求 source=Notarized Developer ID
@@ -58,16 +59,14 @@ case "$target" in
         # 必须 ditto -c -k --keepParent：zip 命令不保留符号链接和扩展属性，签名会失效
         ditto -c -k --keepParent "$target" "$zip"
         submit "$zip"
-        staple "$target"
-        xcrun stapler validate "$target"
+        stapler staple "$target" || fail "staple 失败：$target"
         assess_app "$target"
         ;;
     *.dmg)
         codesign --sign "${SIGN_IDENTITY:-Developer ID Application}" --timestamp "$target"
         codesign --verify --strict "$target"
         submit "$target"
-        staple "$target"
-        xcrun stapler validate "$target"
+        stapler staple "$target" || fail "staple 失败：$target"
         spctl --assess --type open --context context:primary-signature --verbose "$target"
 
         # 用户视角的终验：挂载后对里面的 app 评估，并确认 app 自带票据（Homebrew 装的就是它）
@@ -76,7 +75,7 @@ case "$target" in
         trap 'hdiutil detach "$mnt" >/dev/null 2>&1 || true; rmdir "$mnt" 2>/dev/null || true' EXIT
         for app in "$mnt"/*.app; do
             assess_app "$app"
-            xcrun stapler validate "$app" >/dev/null || fail "dmg 里的 app 没有票据（先对 app 跑 notarize.sh 再打 dmg）"
+            stapler validate "$app" >/dev/null || fail "dmg 里的 app 没有票据（先对 app 跑 notarize.sh 再打 dmg）"
         done
         ;;
     *) fail "只接受 .app 或 .dmg：$target" ;;
