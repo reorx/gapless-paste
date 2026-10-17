@@ -9,7 +9,7 @@ cat <<'MD'
 brew install --cask reorx/tap/gapless-paste
 ```
 
-本仓库是私有的：安装机器需要已 `gh auth login` 且有本仓库访问权限，或设置 `HOMEBREW_GITHUB_API_TOKEN`。也可以直接下载 dmg，把 GaplessPaste 拖进「应用程序」。
+Homebrew 7 默认只加载信任过的第三方 tap，提示无法加载 cask 时先运行 `brew trust --tap reorx/tap`。也可以直接下载下方的 dmg，把 GaplessPaste 拖进「应用程序」。
 
 适用于 macOS 14 及以上，Apple Silicon 与 Intel 通用；已使用 Developer ID 签名并经 Apple 公证。
 MD

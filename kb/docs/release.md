@@ -1,5 +1,6 @@
 ---
 created: 2026-10-17
+updated: 2026-10-18
 tags: [release, signing, notarization, homebrew, ci]
 ---
 
@@ -39,18 +40,18 @@ git push origin v0.2.0
 
 **homebrew**（ubuntu，只在 tag 触发时跑）
 1. 从刚发布的 Release 下载 dmg 与 `SHA256SUMS` 并核验
-2. 仓库是私有的，取 dmg 的 asset id，`scripts/release/render-cask.sh` 生成 `Casks/gapless-paste.rb`
+2. `scripts/release/render-cask.sh` 生成 `Casks/gapless-paste.rb`（仓库不是公开的时候先取 dmg 的 asset id，见下文「cask 的下载地址」）
 3. 拒绝降级（tap 里已有更高版本就失败），用 deploy key 推到 `reorx/homebrew-tap`
 
 `workflow_dispatch` 手动触发只跑 release job 到 artifact 为止（版本 0.0.0），不发 Release、不动 tap，用来验证链路。
 
-## 私有仓库的 cask
+## cask 的下载地址
 
-私有仓库的 Release 资源，网页下载地址（`github.com/…/releases/download/…`）带 token 也是 404，只能走 API：`api.github.com/repos/reorx/gapless-paste/releases/assets/<id>` + `Accept: application/octet-stream` + `Authorization`，API 302 到预签名地址，brew 跨 host 重定向时自动丢掉 header。
+仓库 2026-10-18 起公开，cask 用 Release 的版本化地址 `github.com/reorx/gapless-paste/releases/download/v<版本>/GaplessPaste-<版本>.dmg`，安装不需要任何 GitHub 凭据。cask 由 CI 每版重新渲染，不要手改。
 
-cask 里的 token 取自 brew 自带的 `GitHub::API.credentials`：`HOMEBREW_GITHUB_API_TOKEN` → `gh auth token` → 钥匙串。装了 gh 并登录（且有本仓库权限）的机器零配置可装。副作用：`brew info --json --cask gapless-paste` 的输出里能看到这个 token，只在本机可见。
+homebrew job 每次运行时都查一遍仓库可见性，不是 `PUBLIC` 就切到私有模式：私有仓库的网页下载地址带 token 也是 404，只能走 API 地址 `api.github.com/repos/reorx/gapless-paste/releases/assets/<id>` + `Accept: application/octet-stream` + `Authorization`。token 取自 brew 自带的 `GitHub::API.credentials`（`HOMEBREW_GITHUB_API_TOKEN` → `gh auth token` → 钥匙串）。API 302 到预签名地址，brew 跨 host 重定向时会自动丢掉 header。
 
-asset id 每次上传都不同，所以 cask 由 CI 每版重新渲染，不要手改。仓库将来公开的话，homebrew job 检测到 `PUBLIC` 会自动改为普通的版本化下载地址。
+改了仓库可见性之后不用为此发新版：重跑最近一次 tag 运行里的 homebrew job（`gh run rerun <run-id> --job <job-id>`），它按当前可见性重新渲染同一版本的 cask。同版本不算降级。
 
 Homebrew 7 默认只加载 trust 过的第三方 tap，新机器上先 `brew trust --tap reorx/tap`。
 

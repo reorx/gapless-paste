@@ -5,7 +5,7 @@
 #   给 asset-id 即私有仓库模式：网页下载地址对私有仓库带 token 也是 404，只能走
 #   GitHub API 的 asset 地址 + Authorization header（重定向到预签名地址后 brew 自动丢掉 header）。
 #   token 取 brew 自带的 GitHub::API.credentials：HOMEBREW_GITHUB_API_TOKEN → `gh auth token` → 钥匙串，
-#   装过 gh 并登录的机器零配置可装。仓库公开后去掉 asset-id 参数即回到普通 URL。
+#   装过 gh 并登录的机器零配置可装。不给 asset-id 就是普通的版本化 URL；本仓库已公开，CI 不传它。
 set -euo pipefail
 
 CASK_TOKEN=gapless-paste
