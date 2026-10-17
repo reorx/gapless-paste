@@ -30,6 +30,18 @@ submit() {
     fi
 }
 
+# 从 Apple 拉票据钉进产物。刚 Accepted 时票据可能还没同步到 CloudKit，CI 上也遇到过
+# 网络断开（Error 68, "The network connection was lost"），所以退避重试
+staple() {
+    local i
+    for i in 1 2 3 4 5; do
+        xcrun stapler staple "$1" && return 0
+        echo "stapler staple 第 ${i} 次失败，$((i * 10)) 秒后重试" >&2
+        sleep $((i * 10))
+    done
+    fail "stapler staple 失败：$1"
+}
+
 # Gatekeeper 评估并要求 source=Notarized Developer ID
 assess_app() {
     local out
@@ -46,7 +58,7 @@ case "$target" in
         # 必须 ditto -c -k --keepParent：zip 命令不保留符号链接和扩展属性，签名会失效
         ditto -c -k --keepParent "$target" "$zip"
         submit "$zip"
-        xcrun stapler staple "$target"
+        staple "$target"
         xcrun stapler validate "$target"
         assess_app "$target"
         ;;
@@ -54,7 +66,7 @@ case "$target" in
         codesign --sign "${SIGN_IDENTITY:-Developer ID Application}" --timestamp "$target"
         codesign --verify --strict "$target"
         submit "$target"
-        xcrun stapler staple "$target"
+        staple "$target"
         xcrun stapler validate "$target"
         spctl --assess --type open --context context:primary-signature --verbose "$target"
 
