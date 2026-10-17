@@ -1,4 +1,9 @@
-// Release 必须 Developer ID 签名 + notarytool 公证。
-// DEVELOPMENT_TEAM 由 Local.xcconfig 提供，或由发布脚本通过 xcodebuild 参数覆盖。
+// Release 必须 Developer ID 签名 + notarytool 公证（流程见 kb/docs/release.md）。
+// 不 include Local.xcconfig：那里是 Debug 的 Team。DEVELOPMENT_TEAM 由 make build-release
+// 从 ~/Sync/apple-developer/secrets.env 或 CI 的 APPLE_TEAM_ID 传入。
 CODE_SIGN_STYLE = Manual
 CODE_SIGN_IDENTITY = Developer ID Application
+// 公证要求安全时间戳，xcodebuild build 默认不带
+OTHER_CODE_SIGN_FLAGS = --timestamp
+// xcodebuild build（非 archive）默认注入 get-task-allow 调试 entitlement，带着它公证必被拒
+CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO

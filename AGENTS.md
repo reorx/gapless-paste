@@ -12,6 +12,7 @@ macOS 菜单栏工具：把本机剪贴板里的截图/文件/文本以最少步
 
 - `kb/docs/features.md` — 各功能的行为规则（上传、命名与重名、剪贴板同步、传输层、配置、Dock 形态）。改这些行为或菜单前读
 - `kb/docs/preview-window.md` — 预览窗口的导航、预览类型、缩放、导出、缓存规则。改预览窗口前读
+- `kb/docs/release.md` — 发版方式、CI 流程、secrets、私有仓库 cask、本地出包与失败处理。发版或改发布链路前读
 - `kb/docs/ui-acceptance.md` — 验收通道、脚本清单、DEBUG 钩子、已踩过的坑。做真机 UI 验收或写新 AX 脚本前必读
 - `kb/plans/2026-07-06-gapless-paste-v1-spec.md` — 原始需求与决策背景；部分内容已过时，现状以 `kb/docs/` 为准
 - `kb/sessions/` — 历次改动；`kb/known-issues.md` — 未解决问题与未验收项
@@ -40,6 +41,7 @@ make run         # kill 旧实例并启动已构建的 app（不触发构建）
 make dev         # build + run
 make gen         # 仅重新生成 xcodeproj
 make clean       # 清理构建产物与生成的 xcodeproj
+make build-release / dmg / notarize / release-local   # 本地出已签名公证的 dmg，见 kb/docs/release.md
 ```
 
 - 构建产物：`.build/DerivedData/Build/Products/Debug/GaplessPaste.app`
@@ -51,12 +53,12 @@ make clean       # 清理构建产物与生成的 xcodeproj
 - Bundle ID `com.reorx.gaplesspaste`，**不要改**：通知授权、UserDefaults（探测缓存、近期路径）、DEBUG 钩子的通知名和验收脚本都绑定它
 - app 不沙箱（要启动 ssh/scp 子进程、读 `~/.ssh`），目前也不使用任何受 TCC 保护的能力（辅助功能、录屏、麦克风都没有）。将来加入这类功能（如全局热键）后，签名身份一变授权就会失效，届时需要固定身份并用 `tccutil reset <服务名> com.reorx.gaplesspaste` 清旧授权
 - Debug 签名身份来自 `Config/Local.xcconfig`（不入库）；新机器按 `Config/Local.xcconfig.example` 里的说明创建。没有它时回落 ad-hoc 签名，照常构建
-- 正式发布需要 Developer ID Application 签名 + hardened runtime + notarytool 公证；目前 CI 产物是无签名的
+- 正式发布用 Developer ID Application 签名 + hardened runtime + notarytool 公证，配置在 `Config/Release.xcconfig`（不 include `Local.xcconfig`，Team ID 由 Makefile 从 `~/Sync/apple-developer/secrets.env` 或 CI 传入）
 - App 图标由 `swift scripts/gen_app_icon.swift` 生成到 `GaplessPaste/Assets.xcassets/`（产物入库）；Dock 仍显示旧图标时 `lsregister -f <app 路径>`
 
 ## CI
 
-`.github/workflows/build.yml`：push `v*` tag 时触发，跑 Core 单测 → 无签名 Release 构建 → 打包 zip → 自动创建 GitHub release。
+`.github/workflows/release.yml`：push `v*` tag → Core 单测 → Universal Release 构建 → 签名公证 dmg → 本仓库 Release → 自动更新 `reorx/homebrew-tap` 的 cask。发版就是 `git tag vX.Y.Z && git push origin vX.Y.Z`，版本号只来自 tag。细节见 `kb/docs/release.md`。
 
 ## 配置
 

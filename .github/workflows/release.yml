@@ -1,0 +1,179 @@
+name: release
+
+# push v* tag：Core 单测 → Universal Release 构建（Developer ID 签名）→ dmg 公证 + staple
+#   → 发布到本仓库 Release → homebrew job 按已发布的 dmg 渲染 cask 并推送到 reorx/homebrew-tap
+# workflow_dispatch：只构建、签名、公证并上传 artifact，不发 Release、不动 tap（验证链路用）
+#
+# secrets（Apple 六项与 ~/Sync/apple-developer/secrets.env 同名，文件类为 base64）：
+#   CERT_P12 / CERT_P12_PASSWORD / APPLE_TEAM_ID / ASC_PRIVATE_KEY / ASC_KEY_ID / ASC_ISSUER_ID
+#   TAP_DEPLOY_KEY：reorx/homebrew-tap 的可写 deploy key 私钥（只能写 tap 这一个仓库）
+# 流程、配置方法和排错见 kb/docs/release.md
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  APP_NAME: GaplessPaste
+  CASK_TOKEN: gapless-paste
+  TAP_REPO: reorx/homebrew-tap
+  HOMEBREW_NO_AUTO_UPDATE: 1
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      # tag v1.2.3 → 1.2.3；手动触发用 0.0.0 占位。构建号取 run number 保证单调递增
+      - name: Resolve version
+        id: version
+        run: |
+          version=0.0.0
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then version=${GITHUB_REF_NAME#v}; fi
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "tag 必须是 vMAJOR.MINOR.PATCH：$GITHUB_REF_NAME" >&2; exit 1; }
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Run core tests
+        run: make test
+
+      - name: Install tools
+        run: brew install xcodegen xcbeautify
+
+      - name: Import Developer ID certificate
+        env:
+          CERT_P12: ${{ secrets.CERT_P12 }}
+          CERT_P12_PASSWORD: ${{ secrets.CERT_P12_PASSWORD }}
+        run: |
+          : "${CERT_P12:?缺 secret CERT_P12}" "${CERT_P12_PASSWORD:?缺 secret CERT_P12_PASSWORD}"
+          keychain="$RUNNER_TEMP/build.keychain-db"
+          password=$(uuidgen)
+          security create-keychain -p "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
+          security unlock-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          printf '%s' "$CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$CERT_P12_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/cert.p12"
+          # 允许 codesign 免弹窗使用私钥，缺这行 CI 上的签名会卡住或失败
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$password" "$keychain" >/dev/null
+          security find-identity -v -p codesigning "$keychain"
+
+      # build-release 末尾跑 scripts/release/verify-app.sh：签名身份、runtime、timestamp、get-task-allow、Universal
+      - name: Build Release
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: make build-release VERSION=${{ steps.version.outputs.version }} BUILD_NUMBER=${{ github.run_number }}
+
+      - name: Package, sign and notarize dmg
+        env:
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          : "${ASC_PRIVATE_KEY:?缺 secret ASC_PRIVATE_KEY}"
+          export ASC_PRIVATE_KEY_PATH="$RUNNER_TEMP/notary-key.p8"
+          printf '%s' "$ASC_PRIVATE_KEY" | base64 --decode > "$ASC_PRIVATE_KEY_PATH"
+          make dmg notarize
+          # sha256 在 staple 之后计算：staple 会改 dmg 内容
+          (cd dist && shasum -a 256 -- *.dmg > SHA256SUMS && cat SHA256SUMS)
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.APP_NAME }}-${{ steps.version.outputs.version }}
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title "$APP_NAME $GITHUB_REF_NAME" --notes "$(scripts/release/release-notes.sh)" --generate-notes
+          fi
+
+      - name: Clean signing credentials
+        if: always()
+        run: |
+          rm -f "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/notary-key.p8"
+          if [[ -f "$RUNNER_TEMP/build.keychain-db" ]]; then security delete-keychain "$RUNNER_TEMP/build.keychain-db"; fi
+
+  # 只依赖已发布的 Release，不重新构建：失败时 Re-run failed jobs 即可，不必重做签名公证。
+  # 纯文本处理，用 ubuntu runner（私有仓库的 macOS 分钟按 10 倍计费）
+  homebrew:
+    needs: release
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # 多个 release 并发时串行更新 tap
+    concurrency:
+      group: homebrew-tap
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/checkout@v7
+        with:
+          repository: ${{ env.TAP_REPO }}
+          ssh-key: ${{ secrets.TAP_DEPLOY_KEY }}
+          path: tap
+
+      - name: Render cask from the published dmg
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=${GITHUB_REF_NAME#v}
+          dmg="$APP_NAME-$version.dmg"
+          mkdir -p "$RUNNER_TEMP/release"
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$dmg" --pattern SHA256SUMS --dir "$RUNNER_TEMP/release"
+          (cd "$RUNNER_TEMP/release" && shasum -a 256 -c SHA256SUMS)
+          sha=$(shasum -a 256 "$RUNNER_TEMP/release/$dmg" | cut -d' ' -f1)
+
+          # 私有仓库的 cask 要走 API asset 地址下载，原因见 scripts/release/render-cask.sh 头注释
+          asset_id=""
+          if [[ "$(gh repo view "$GITHUB_REPOSITORY" --json visibility --jq .visibility)" != PUBLIC ]]; then
+            asset_id=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" \
+              --jq ".assets[] | select(.name == \"$dmg\") | .id")
+            [[ -n "$asset_id" ]] || { echo "release 里找不到 $dmg" >&2; exit 1; }
+          fi
+          scripts/release/render-cask.sh "$version" "$sha" ${asset_id:+"$asset_id"} > "$RUNNER_TEMP/cask.rb"
+          ruby -c "$RUNNER_TEMP/cask.rb"
+          cat "$RUNNER_TEMP/cask.rb"
+
+          # 重跑旧版本的 job 不能把 tap 降级
+          cask="tap/Casks/$CASK_TOKEN.rb"
+          if [[ -f "$cask" ]]; then
+            current=$(sed -n 's/^  version "\(.*\)"$/\1/p' "$cask")
+            ruby -e 'exit(Gem::Version.new(ARGV[0]) > Gem::Version.new(ARGV[1]) ? 1 : 0)' "$current" "$version" \
+              || { echo "tap 已是更新的 ${current}，拒绝降级到 $version" >&2; exit 1; }
+          fi
+          mkdir -p tap/Casks
+          cp "$RUNNER_TEMP/cask.rb" "$cask"
+
+      - name: Commit and push cask
+        working-directory: tap
+        run: |
+          git add "Casks/$CASK_TOKEN.rb"
+          if git diff --cached --quiet; then echo "cask 已与本次 release 一致"; exit 0; fi
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit -m "$CASK_TOKEN ${GITHUB_REF_NAME#v}"
+          git push origin HEAD

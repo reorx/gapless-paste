@@ -13,3 +13,6 @@ Config/Local.xcconfig
 
 # scratch scripts
 tmp/
+
+# release artifacts (make dmg / CI)
+dist/
