@@ -41,7 +41,7 @@ make run         # kill 旧实例并启动已构建的 app（不触发构建）
 make dev         # build + run
 make gen         # 仅重新生成 xcodeproj
 make clean       # 清理构建产物与生成的 xcodeproj
-make build-release / dmg / notarize / release-local   # 本地出已签名公证的 dmg，见 kb/docs/release.md
+make release-local   # 本地出已签名公证的 dmg（build-release / notarize-app / dmg / notarize），见 kb/docs/release.md
 ```
 
 - 构建产物：`.build/DerivedData/Build/Products/Debug/GaplessPaste.app`

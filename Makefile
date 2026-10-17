@@ -4,7 +4,7 @@ APP := $(DERIVED_DATA)/Build/Products/Debug/GaplessPaste.app
 XCODEBUILD := xcodebuild -project GaplessPaste.xcodeproj -scheme GaplessPaste \
 	-destination 'platform=macOS' -derivedDataPath $(DERIVED_DATA)
 
-.PHONY: gen build test run dev clean build-release dmg notarize release-local
+.PHONY: gen build test run dev clean build-release notarize-app dmg notarize release-local
 
 RELEASE_APP := $(DERIVED_DATA)/Build/Products/Release/GaplessPaste.app
 DIST := dist
@@ -29,7 +29,11 @@ build-release: gen
 		$(VERSION_ARGS) | xcbeautify
 	scripts/release/verify-app.sh $(RELEASE_APP)
 
-# Release 产物 → dist/GaplessPaste-<version>.dmg（未签名，签名在 notarize）
+# 公证 Release 产物并把票据钉进 app（Homebrew 装的是从 dmg 里拷出来的 app，它自己得带票据）
+notarize-app:
+	@$(LOAD_SECRETS); scripts/release/notarize.sh $(RELEASE_APP)
+
+# 已公证的 app → dist/GaplessPaste-<version>.dmg（dmg 的签名在 notarize）
 dmg:
 	scripts/release/make-dmg.sh $(RELEASE_APP) $(DIST)
 
@@ -40,7 +44,7 @@ notarize:
 # 本地完整走一遍发布产物链路，不上传、不改 tap
 release-local: build-release
 	rm -rf $(DIST)
-	$(MAKE) dmg notarize
+	$(MAKE) notarize-app dmg notarize
 
 # GaplessPasteCore 纯逻辑单测
 test:

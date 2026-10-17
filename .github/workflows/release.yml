@@ -76,7 +76,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: make build-release VERSION=${{ steps.version.outputs.version }} BUILD_NUMBER=${{ github.run_number }}
 
-      - name: Package, sign and notarize dmg
+      - name: Notarize app, package and notarize dmg
         env:
           ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -85,7 +85,7 @@ jobs:
           : "${ASC_PRIVATE_KEY:?缺 secret ASC_PRIVATE_KEY}"
           export ASC_PRIVATE_KEY_PATH="$RUNNER_TEMP/notary-key.p8"
           printf '%s' "$ASC_PRIVATE_KEY" | base64 --decode > "$ASC_PRIVATE_KEY_PATH"
-          make dmg notarize
+          make notarize-app dmg notarize
           # sha256 在 staple 之后计算：staple 会改 dmg 内容
           (cd dist && shasum -a 256 -- *.dmg > SHA256SUMS && cat SHA256SUMS)
 

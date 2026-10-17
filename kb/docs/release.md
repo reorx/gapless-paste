@@ -32,7 +32,9 @@ git push origin v0.2.0
 1. 跑 Core 单测
 2. 临时 keychain 导入 Developer ID Application 证书
 3. `make build-release`：Universal（arm64 + x86_64）Release 构建，签名设置来自 `Config/Release.xcconfig`；末尾 `scripts/release/verify-app.sh` 自查签名身份、hardened runtime、时间戳、无 `get-task-allow`、双架构
-4. `make dmg notarize`：打 dmg → 签 dmg → notarytool 公证 → staple → Gatekeeper 终验（挂载后对 app 评估，要求 `source=Notarized Developer ID`）
+4. `make notarize-app dmg notarize`，公证两轮：
+   - app 打 zip 公证，票据钉进 app。Homebrew 安装的是从 dmg 里拷出来的 app，只钉 dmg 的话装好的 app 没票据，离线首次启动会被 Gatekeeper 拦（v0.1.0 就是这样，`syspolicy_check distribution` 判 Fatal）
+   - 用已带票据的 app 打 dmg → 签 dmg → 公证 → staple → 终验：挂载后对 app 评估要求 `source=Notarized Developer ID`，且 app 自带票据
 5. staple 之后算 `SHA256SUMS`，上传 artifact，在本仓库创建 Release（安装说明 + 自动生成的变更列表）
 
 **homebrew**（ubuntu，只在 tag 触发时跑）
@@ -73,9 +75,10 @@ Homebrew 7 默认只加载 trust 过的第三方 tap，新机器上先 `brew tru
 
 ```sh
 make build-release     # Release 构建 + 自查（DEVELOPMENT_TEAM 从 secrets.env 读）
+make notarize-app      # 公证 app 并钉票据
 make dmg               # → dist/GaplessPaste-<version>.dmg
 make notarize          # 签 dmg + 公证 + staple + 终验
-make release-local     # 以上三步连跑，不上传、不改 tap
+make release-local     # 以上四步连跑，不上传、不改 tap（本机约 1 分钟）
 ```
 
 需要本机钥匙串里有 Developer ID Application 证书和 `~/Sync/apple-developer/secrets.env`。
@@ -91,4 +94,4 @@ make release-local     # 以上三步连跑，不上传、不改 tap
 - `.github/workflows/release.yml`
 - `scripts/release/`：`verify-app.sh`、`make-dmg.sh`、`notarize.sh`、`render-cask.sh`、`release-notes.sh`
 - `Config/Release.xcconfig`：Developer ID、`--timestamp`、`CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO`（缺它公证必拒）
-- `Makefile`：`build-release` / `dmg` / `notarize` / `release-local`
+- `Makefile`：`build-release` / `notarize-app` / `dmg` / `notarize` / `release-local`
