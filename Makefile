@@ -4,7 +4,7 @@ APP := $(DERIVED_DATA)/Build/Products/Debug/GaplessPaste.app
 XCODEBUILD := xcodebuild -project GaplessPaste.xcodeproj -scheme GaplessPaste \
 	-destination 'platform=macOS' -derivedDataPath $(DERIVED_DATA)
 
-.PHONY: gen build test run dev clean build-release notarize-app dmg notarize release-local
+.PHONY: gen build test test-release run dev clean build-release notarize-app dmg notarize appcast release-local
 
 RELEASE_APP := $(DERIVED_DATA)/Build/Products/Release/GaplessPaste.app
 DIST := dist
@@ -27,6 +27,7 @@ build-release: gen
 	@$(LOAD_SECRETS); set -o pipefail && $(XCODEBUILD) -configuration Release build \
 		ARCHS='arm64 x86_64' ONLY_ACTIVE_ARCH=NO DEVELOPMENT_TEAM="$${APPLE_TEAM_ID:?缺 APPLE_TEAM_ID}" \
 		$(VERSION_ARGS) | xcbeautify
+	scripts/release/sign-app.sh $(RELEASE_APP)
 	scripts/release/verify-app.sh $(RELEASE_APP)
 
 # 公证 Release 产物并把票据钉进 app（Homebrew 装的是从 dmg 里拷出来的 app，它自己得带票据）
@@ -41,14 +42,21 @@ dmg:
 notarize:
 	@$(LOAD_SECRETS); for f in $(DIST)/*.dmg; do scripts/release/notarize.sh "$$f"; done
 
+# 对最终已公证 dmg 生成单项 Sparkle feed
+appcast:
+	scripts/release/render-appcast.sh $(RELEASE_APP) $(DIST)/GaplessPaste-$$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' $(RELEASE_APP)/Contents/Info.plist).dmg $(DIST)/appcast.xml
+
 # 本地完整走一遍发布产物链路，不上传、不改 tap
 release-local: build-release
 	rm -rf $(DIST)
-	$(MAKE) notarize-app dmg notarize
+	$(MAKE) notarize-app dmg notarize appcast
 
 # GaplessPasteCore 纯逻辑单测
 test:
 	cd GaplessPasteCore && swift test
+
+test-release:
+	scripts/release/test-release.sh
 
 # kill 后等旧进程退出，再用 open -n 强制新实例启动：
 # 普通 open 在进程刚退出时会撞上 LaunchServices 的滞留注册而报 -600。

@@ -1,5 +1,6 @@
 import AppKit
 import GaplessPasteCore
+import Sparkle
 
 // 菜单栏图标与菜单。每次打开时经 menuNeedsUpdate 全量重建，
 // 状态（isBusy / 上次结果 / 配置错误）即时反映。
@@ -8,6 +9,7 @@ import GaplessPasteCore
 final class StatusMenuController: NSObject, NSMenuDelegate {
     private let statusItem: NSStatusItem
     private let appState: AppState
+    private let updateController: UpdateController
     private var dropPanelController: DropPanelController!
 
     /// 菜单项 representedObject 载体（machine × directory）
@@ -20,8 +22,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         }
     }
 
-    init(appState: AppState) {
+    init(appState: AppState, updateController: UpdateController) {
         self.appState = appState
+        self.updateController = updateController
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         super.init()
         statusItem.button?.image = NSImage(
@@ -116,6 +119,15 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(settingsItem)
         menu.addItem(actionItem("重载配置", #selector(reloadConfig)))
         menu.addItem(actionItem("打开日志", #selector(openLog)))
+        let updateItem = NSMenuItem(
+            title: "检查更新…",
+            action: #selector(SPUStandardUpdaterController.checkForUpdates(_:)),
+            keyEquivalent: ""
+        )
+        updateItem.target = updateController.controller
+        updateItem.isEnabled = updateController.controller.updater.canCheckForUpdates
+        updateItem.setAccessibilityIdentifier("check-for-updates")
+        menu.addItem(updateItem)
         let quitItem = NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quitItem)
     }

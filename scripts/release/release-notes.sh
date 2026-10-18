@@ -12,4 +12,8 @@ brew install --cask reorx/tap/gapless-paste
 Homebrew 7 默认只加载信任过的第三方 tap，提示无法加载 cask 时先运行 `brew trust --tap reorx/tap`。也可以直接下载下方的 dmg，把 GaplessPaste 拖进「应用程序」。
 
 适用于 macOS 14 及以上，Apple Silicon 与 Intel 通用；已使用 Developer ID 签名并经 Apple 公证。
+
+## 应用内更新
+
+从 v0.2.0 起，正式版每天自动检查更新，也可在菜单里点「检查更新…」。发现更新后由你确认安装并重启；0.1.x 用户需先通过 dmg 或 Homebrew 升级一次。
 MD

@@ -4,7 +4,7 @@ macOS 菜单栏工具：把本机剪贴板里的截图/文件/文本以最少步
 
 ## 功能现状
 
-- 已实现：目录上传、快速上传、拖拽上传、剪贴板双向同步、预览远端目录窗口、设置窗口、窗口打开时的 Dock 形态
+- 已实现：目录上传、快速上传、拖拽上传、剪贴板双向同步、预览远端目录窗口、设置窗口、窗口打开时的 Dock 形态、Sparkle 应用内更新
 - 未实现：全局热键、登录启动项、浏览器图像数据拖拽
 - 远端剪贴板注入只支持 macOS 远端；非 Darwin 时同步菜单项置灰，图像上传降级为回传路径
 
@@ -38,6 +38,7 @@ macOS 菜单栏工具：把本机剪贴板里的截图/文件/文本以最少步
 ```
 make build       # xcodegen + Debug 构建
 make test        # GaplessPasteCore 单测
+make test-release # 发布脚本行为测试（appcast / 嵌套签名 / cask）
 make run         # kill 旧实例并启动已构建的 app（不触发构建）
 make dev         # build + run
 make gen         # 仅重新生成 xcodeproj
@@ -54,12 +55,12 @@ make release-local   # 本地出已签名公证的 dmg（build-release / notariz
 - Bundle ID `com.reorx.gaplesspaste`，**不要改**：通知授权、UserDefaults（探测缓存、近期路径）、DEBUG 钩子的通知名和验收脚本都绑定它
 - app 不沙箱（要启动 ssh/scp 子进程、读 `~/.ssh`），目前也不使用任何受 TCC 保护的能力（辅助功能、录屏、麦克风都没有）。将来加入这类功能（如全局热键）后，签名身份一变授权就会失效，届时需要固定身份并用 `tccutil reset <服务名> com.reorx.gaplesspaste` 清旧授权
 - Debug 签名身份来自 `Config/Local.xcconfig`（不入库）；新机器按 `Config/Local.xcconfig.example` 里的说明创建。没有它时回落 ad-hoc 签名，照常构建
-- 正式发布用 Developer ID Application 签名 + hardened runtime + notarytool 公证，配置在 `Config/Release.xcconfig`（不 include `Local.xcconfig`，Team ID 由 Makefile 从 `~/Sync/apple-developer/secrets.env` 或 CI 传入）
+- 正式发布用 Developer ID Application 签名 + hardened runtime + notarytool 公证，配置在 `Config/Release.xcconfig`（不 include `Local.xcconfig`，Team ID 由 Makefile 从 `~/Sync/apple-developer/secrets.env` 或 CI 传入）。`build-release` 从内到外重签 Sparkle 的辅助程序，再逐一校验所有嵌套代码
 - App 图标由 `swift scripts/gen_app_icon.swift` 生成到 `GaplessPaste/Assets.xcassets/`（产物入库）；Dock 仍显示旧图标时 `lsregister -f <app 路径>`
 
 ## CI
 
-`.github/workflows/release.yml`：push `v*` tag → Core 单测 → Universal Release 构建 → 签名公证 dmg → 本仓库 Release → 自动更新 `reorx/homebrew-tap` 的 cask。发版就是 `git tag vX.Y.Z && git push origin vX.Y.Z`，版本号只来自 tag。细节见 `kb/docs/release.md`。
+`.github/workflows/release.yml`：push `v*` tag → Core 与发布脚本测试 → Universal Release 构建 → app、dmg 两轮签名公证 → 最终 dmg 的 EdDSA 签名与 appcast → 本仓库 Release → 更新 tap cask。发版就是 `git tag vX.Y.Z && git push origin vX.Y.Z`，版本号只来自 tag。Sparkle 固定版本在 `project.yml` 和 `scripts/release/sparkle-tools.sh`，升级时一起改并更新工具包 SHA256。密钥、feed 与发布细节见 `kb/docs/release.md`。
 
 ## 配置
 

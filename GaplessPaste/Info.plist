@@ -22,5 +22,17 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>SUAllowsAutomaticUpdates</key>
+	<false/>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/reorx/gapless-paste/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>Q3O0ZNR19jSxu1ju81By4MnEa8s/FAnrE5zRVXckj0U=</string>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 </dict>
 </plist>

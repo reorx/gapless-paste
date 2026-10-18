@@ -20,6 +20,7 @@ macOS 菜单栏工具：把本机剪贴板里的截图、文件和文本，用�
 - **剪贴板双向同步**：把本机剪贴板推到远端，或把远端剪贴板拉回本机
 - **预览远端目录**：在独立窗口里浏览远端目录，预览图片、音频和文本，多张图片并排对比，并能把文件复制或下载回本机
 - **设置窗口**：用图形界面编辑机器和目录，改动即时校验、自动保存
+- **应用内更新**：正式版每天检查一次更新，也可在菜单里点「检查更新…」，确认后安装并重启
 
 传输直接调用系统的 `ssh` 和 `scp`，`~/.ssh/config` 里的别名、密钥、agent、跳板都照常可用。连接通过 ControlMaster 复用，连续上传几乎没有等待。
 
@@ -36,6 +37,8 @@ brew install --cask reorx/tap/gapless-paste
 Homebrew 7 默认只加载信任过的第三方 tap，提示无法加载 cask 时先运行 `brew trust --tap reorx/tap`。
 
 也可以从 [Releases](https://github.com/reorx/gapless-paste/releases) 下载 dmg，把 GaplessPaste 拖进「应用程序」。发布包经过 Developer ID 签名和 Apple 公证。
+
+从 v0.2.0 起内置 Sparkle 自动检查更新，安装前会弹出确认窗口。更早的版本需先下载新版或通过 Homebrew 升级一次。
 
 ## 使用前提
 

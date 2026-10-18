@@ -46,6 +46,7 @@ $url_stanza
   desc "$DESC"
   homepage "https://github.com/$REPO"
 
+  auto_updates true
   depends_on macos: :$MIN_MACOS
 
   app "$APP_NAME.app"

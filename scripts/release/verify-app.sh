@@ -10,15 +10,18 @@ fail() { echo "✗ $*" >&2; exit 1; }
 
 codesign --verify --deep --strict "$app" || fail "codesign --verify 未通过"
 
-info=$(codesign -dvv "$app" 2>&1)
-grep -q '^Authority=Developer ID Application' <<<"$info" || fail "不是 Developer ID Application 签名"
-grep -qE '^CodeDirectory .*flags=.*runtime' <<<"$info" || fail "未开启 hardened runtime"
-grep -q '^Timestamp=' <<<"$info" || fail "签名缺安全时间戳（OTHER_CODE_SIGN_FLAGS=--timestamp）"
-
-entitlements=$(codesign -d --entitlements - --xml "$app" 2>/dev/null || true)
-if grep -q 'get-task-allow' <<<"$entitlements"; then
-    fail "含 get-task-allow（Release.xcconfig 需 CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO）"
-fi
+while IFS= read -r -d '' code; do
+    codesign --verify --strict "$code" || fail "嵌套签名无效：$code"
+    info=$(codesign -dvv "$code" 2>&1)
+    grep -q '^Authority=Developer ID Application' <<<"$info" || fail "不是 Developer ID Application 签名：$code"
+    grep -qE '^CodeDirectory .*flags=.*runtime' <<<"$info" || fail "未开启 hardened runtime：$code"
+    grep -q '^Timestamp=' <<<"$info" || fail "签名缺安全时间戳：$code"
+    entitlements=$(codesign -d --entitlements - --xml "$code" 2>/dev/null || true)
+    if grep -q 'get-task-allow' <<<"$entitlements"; then
+        fail "含 get-task-allow：$code"
+    fi
+    echo "✓ Developer ID；runtime；timestamp：$code"
+done < <("$(dirname "$0")/list-code.sh" "$app")
 
 exe="$app/Contents/MacOS/$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")"
 archs=$(lipo -archs "$exe")

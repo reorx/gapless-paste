@@ -5,10 +5,13 @@ options:
     macOS: "14.0"
   createIntermediateGroups: true
 
-# 第三方依赖统一在 GaplessPasteCore/Package.swift 声明，app target 传递依赖
+# 纯逻辑依赖放 Core；Sparkle 只进入 app target。
 packages:
   GaplessPasteCore:
     path: GaplessPasteCore
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.0
 
 configFiles:
   Debug: Config/Debug.xcconfig
@@ -27,6 +30,7 @@ targets:
       - GaplessPaste
     dependencies:
       - package: GaplessPasteCore
+      - package: Sparkle
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.reorx.gaplesspaste
@@ -43,6 +47,12 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSUIElement: true
+        SUFeedURL: https://github.com/reorx/gapless-paste/releases/latest/download/appcast.xml
+        SUPublicEDKey: Q3O0ZNR19jSxu1ju81By4MnEa8s/FAnrE5zRVXckj0U=
+        SUEnableAutomaticChecks: true
+        SUScheduledCheckInterval: 86400
+        SUAutomaticallyUpdate: false
+        SUAllowsAutomaticUpdates: false
     entitlements:
       path: GaplessPaste/GaplessPaste.entitlements
       properties:

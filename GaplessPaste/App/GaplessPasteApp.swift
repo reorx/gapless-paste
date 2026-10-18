@@ -27,10 +27,12 @@ struct GaplessPasteApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var appState: AppState!
     private var menuController: StatusMenuController!
+    private var updateController: UpdateController!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         appState = AppState()
-        menuController = StatusMenuController(appState: appState)
+        updateController = UpdateController()
+        menuController = StatusMenuController(appState: appState, updateController: updateController)
         #if DEBUG
         DebugHooks.install(appState: appState)
         #endif
