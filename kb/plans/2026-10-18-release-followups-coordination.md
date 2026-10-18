@@ -199,7 +199,7 @@ T5 另读 `~/.claude/skills/macos-app-bootstrap/SKILL.md` 和 `scripts/setup-sig
 
 ## 状态区（只有协调者改）
 
-审阅基线（已审完的最后一个提交）：feishu-lite `88ad5d3`、mdnotate `7d451d8`、homebrew-tap `a3a1e0b`；skill 文档已由协调者更新到「已接入项目」表、homebrew.md 迁移步骤、troubleshooting 的 dmg 重复签名一条
+审阅基线（已审完的最后一个提交）：本仓库 `08ac52e`、feishu-lite `88ad5d3`、mdnotate `7d451d8`；全部任务已签收（2026-10-18）；skill 文档已由协调者更新到「已接入项目」表、homebrew.md 迁移步骤、troubleshooting 的 dmg 重复签名一条
 
 | 任务 | 状态 | agent / tab | 结果提交 | 备注 |
 |---|---|---|---|---|
@@ -209,4 +209,4 @@ T5 另读 `~/.claude/skills/macos-app-bootstrap/SKILL.md` 和 `scripts/setup-sig
 | T5 | 已签收 | `rel-debug-team` / tab `w3Z:t7`（pane `w3Z:p8`） | 本仓库 `ea1edb6`；skill 仓库提交（未推送） | 13 个脚本测试通过；两份 Local.xcconfig 为 `YU3FMV36N2`；Debug 构建签名为付费 Team |
 | T4 | 已签收 | `rel-sparkle` / tab `w3Z:t8`（pane `w3Z:p9`） | 本仓库 `72d6de5`（已推送），v0.2.0 已发布 | CI run 39094671178；0.1.9 从真实 feed 更新到 0.2.0 实机通过；发布步骤改为不 clobber（T4 自定） |
 | T4b | 已签收 | `rel-sparkle`（沿用）/ tab `w3Z:t8` | skill 仓库提交（未推送） | 模板与 `72d6de5` 逐文件对照；actionlint、模板与密钥生命周期测试通过；真实复用已有密钥，备份 sha256 不变、无新 account |
-| T4c | 进行中 | `rel-sparkle`（沿用）/ tab `w3Z:t8` | | `kb/docs/release.md` 的密钥步骤改用 `setup-secrets.sh --sparkle` |
+| T4c | 已签收 | `rel-sparkle`（沿用）/ tab `w3Z:t8` | 本仓库 `08ac52e`（已推送） | `kb/docs/release.md` 的密钥步骤改用 `setup-secrets.sh --sparkle` |
