@@ -37,6 +37,9 @@ tags:
 | Sparkle 的端到端验证 | 只发一个正式版 v0.2.0。验证「旧版收到更新」时，在本地用同样的代码构建一个版本号更低（如 0.1.9、构建号低于 CI 的 run number）的 Developer ID 签名版本，放在临时目录运行，让它从真实的 feed 更新到 v0.2.0 | 协调者 |
 | T4 推送 master | 允许。master 上除协调者和 T5 的提交外，还有一个「仓库公开」提交（另一个会话做的公开准备：README、LICENSE、文档改为公开口径），它本来就是为公开准备的 | 协调者 |
 | 正在运行的 `gapless-paste-svg` Debug 实例（2026-10-17 18:20 启动，启动它的 agent 已退出） | T4 验收需要启动同 bundle ID 的 app 时，可以退出它；T5 不需要启动 app，不碰它 | 协调者 |
+| T4b：发布步骤不再 `--clobber` | 采纳 T4 的做法并写进通用模板：Release 已存在就失败，发布后的修复发新版本。cask 的 sha256 和 appcast 的签名都绑定已发布的字节 | 协调者（T4 提出） |
+| T4b：Sparkle 在 skill 里的定位 | 可选模块（`apply-templates.sh --sparkle` 之类的开关）。只适用于公开仓库：私有仓库的 feed 和更新包匿名拿不到，文档里写明。从内到外重签所有嵌套代码、`verify-app.sh` 逐个检查嵌套代码，这两项不依赖 Sparkle，作为通用模板的默认行为 | 协调者 |
+| T4b：密钥安全 | `setup-secrets.sh` 的 Sparkle 部分发现 `~/Sync/apple-developer/sparkle/<token>_ed25519.key` 或钥匙串里已有该 account 时只复用，绝不重新生成或覆盖；只有两处都没有时才生成 | 协调者 |
 | T4、T5 的顺序 | 先 T5 后 T4。两者都要在本仓库 `make gen` / `make build`，同时跑会互相读到对方改了一半的 `project.yml` | 协调者 |
 
 ## 必读
@@ -68,6 +71,7 @@ T5 另读 `~/.claude/skills/macos-app-bootstrap/SKILL.md` 和 `scripts/setup-sig
 | T3 私有项目的两轮公证 | （不入库） | 不入库 | 无 | 不入库 |
 | T5 Debug 签名换付费 Team | `rel-debug-team` | `~/Code/gapless-paste` | 无 | 脚本测试、两份 Local.xcconfig、Debug 构建的签名 |
 | T4 Sparkle 自动更新 | `rel-sparkle` | `~/Code/gapless-paste` | T5 签收后开始 | 本地出包、v0.2.0 正式发布、旧版从真实 feed 更新到 v0.2.0 |
+| T4b Sparkle 通用化进 skill | `rel-sparkle`（沿用） | `~/Code/gapless-paste`（改的是 skill 目录） | T4 签收后开始 | 模板与本仓库实现逐项对照、脚本测试、actionlint、`setup-secrets.sh` 复用已有密钥 |
 
 ### T1 feishu-lite：tap 写权限换成 deploy key（已签收）
 
@@ -138,7 +142,7 @@ T5 另读 `~/.claude/skills/macos-app-bootstrap/SKILL.md` 和 `scripts/setup-sig
 不做：
 
 - 不做增量更新、beta 通道、设置窗口里的更新开关，不改 Bundle ID
-- 不把 Sparkle 通用化到 skill 里。等 T4 签收后另派
+- 不把 Sparkle 通用化到 skill 里（见 T4b）
 - 不动 `feat/svg-preview` 分支
 
 怎么做：
@@ -151,6 +155,29 @@ T5 另读 `~/.claude/skills/macos-app-bootstrap/SKILL.md` 和 `scripts/setup-sig
 
 完成标准：上面四项验证的证据（命令、关键输出、截图路径）都在总结里；本仓库的提交已推送，`v0.2.0` 已发布；新加的 secret 和本机密钥备份的位置写进总结。
 
+### T4b 把 Sparkle 通用化进 `macos-app-release` skill（T4 签收后开始）
+
+目标：别的项目照着 `~/.claude/skills/macos-app-release/` 就能接上 T4 这一套：Sparkle 自动更新、appcast、嵌套代码重签与检查、不覆盖已发布的 Release。skill 目录是软链，进 `realpath` 后在它所在的 git 仓库提交，不推送。
+
+范围：
+
+1. `assets/templates/`：从本仓库 T4 的实际实现（`72d6de5`）提炼模板，项目相关的值改成占位符。通用部分（`sign-app.sh`、`list-code.sh`、`verify-app.sh` 的嵌套代码检查、发布步骤不再 clobber）作为默认；Sparkle 部分（`UpdateController.swift`、`render-appcast.sh`、`sparkle-tools.sh`、release.yml 的 appcast 步骤、`render-cask.sh` 的 `auto_updates true`、Makefile 的 appcast 目标、project.yml 需要加的包和 Info 键、`kb-docs-release.md` 的 Sparkle 一节）作为可选模块
+2. `scripts/apply-templates.sh`：加启用 Sparkle 的开关；需要手工合并的部分（project.yml、菜单项接线）照现有做法在最后打印清单
+3. `scripts/setup-secrets.sh`：加 Sparkle 密钥部分（见决定表「T4b：密钥安全」），把私钥存成 `SPARKLE_ED_PRIVATE_KEY`，打印公钥供写进 project.yml，全程不打印私钥
+4. 文档：`SKILL.md`（设计决定、实施步骤、已接入项目表里本仓库已公开并接了 Sparkle）、`references/pipeline.md`（替换现在只有一行的 Sparkle 说明）、`references/troubleshooting.md`（T4 踩到的坑：`xcodebuild build` 不会重签 Sparkle 辅助程序、`sign_update` 首次访问钥匙串会弹授权框、已发布字节不可替换等）
+5. 测试：T4 的 `scripts/release/test-release.sh` 一并模板化
+
+验证：
+
+- 用本仓库的值渲染模板，与本仓库的实际文件逐个 diff，除了预期的占位差异外一致，diff 存进证据目录
+- 渲染出的 workflow 过 actionlint；所有脚本 `bash -n`；模板化的 `test-release.sh` 在渲染结果上能跑通
+- `setup-secrets.sh --repo reorx/gapless-paste --skip-apple --skip-tap` 加 Sparkle 开关：复用已有密钥，不生成新密钥（运行前后备份文件的 sha256 不变、钥匙串里没有多出 account），secret 更新时间变化
+- 不需要实机验收，不发版
+
+不做：不改本仓库的代码和文档（T4 已完成），不推送 skill 仓库，不发版。
+
+完成标准：上面四项验证的证据在总结（`T4b-summary.md`）里；skill 仓库一个提交。
+
 ## 共同约束
 
 - 只做自己的任务，做完不开始下一个，不改本文件
@@ -161,7 +188,7 @@ T5 另读 `~/.claude/skills/macos-app-bootstrap/SKILL.md` 和 `scripts/setup-sig
 - 除本任务写明的以外，不改 `~/.claude/skills/` 下的文件、`~/Code/homebrew-tap/` 和 `~/Sync/apple-developer/`。skill 的脚本或文档有问题，写进总结的「交给协调者」
 - 对外可见的动作只限本文写明的。不改仓库设置
 - 本仓库已公开：写进本仓库的文件（代码、注释、文档、提交信息）不提私有仓库的名字和路径
-- 协调者负责的文件：本文、`kb/next-up.md`、`kb/known-issues.md`、`~/.claude/skills/macos-app-release/`（T4 之后的通用化另派）、tap 的 README、`~/Sync/apple-developer/AGENTS.md`。需要登记的写进「交给协调者」
+- 协调者负责的文件：本文、`kb/next-up.md`、`kb/known-issues.md`、`~/.claude/skills/macos-app-release/`（T4b 除外）、tap 的 README、`~/Sync/apple-developer/AGENTS.md`。需要登记的写进「交给协调者」
 - 临时文件和证据放 `~/Code/gapless-paste/tmp/2026-10-18-release-followups/<任务编号>/`
 
 ## 交付物
@@ -180,4 +207,5 @@ T5 另读 `~/.claude/skills/macos-app-bootstrap/SKILL.md` 和 `scripts/setup-sig
 | T2 | 已签收 | `rel-mdnotate-key` / tab `w3Z:t5` | mdnotate `7d451d8`（已推送） | deploy key id 166777200；旧 secret 已删；旧 PAT 待用户网页吊销；真实推送待下一次发版 |
 | T3 | 已签收 | （不入库） / tab `w3Z:t6` | 不入库 | 见 tmp 里的总结 |
 | T5 | 已签收 | `rel-debug-team` / tab `w3Z:t7`（pane `w3Z:p8`） | 本仓库 `ea1edb6`；skill 仓库提交（未推送） | 13 个脚本测试通过；两份 Local.xcconfig 为 `YU3FMV36N2`；Debug 构建签名为付费 Team |
-| T4 | 进行中 | `rel-sparkle` / tab `w3Z:t8`（pane `w3Z:p9`） | | 监视器 bd9a2pucp |
+| T4 | 已签收 | `rel-sparkle` / tab `w3Z:t8`（pane `w3Z:p9`） | 本仓库 `72d6de5`（已推送），v0.2.0 已发布 | CI run 39094671178；0.1.9 从真实 feed 更新到 0.2.0 实机通过；发布步骤改为不 clobber（T4 自定） |
+| T4b | 进行中 | `rel-sparkle`（沿用） | | |
