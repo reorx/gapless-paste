@@ -180,4 +180,4 @@ T5 另读 `~/.claude/skills/macos-app-bootstrap/SKILL.md` 和 `scripts/setup-sig
 | T2 | 已签收 | `rel-mdnotate-key` / tab `w3Z:t5` | mdnotate `7d451d8`（已推送） | deploy key id 166777200；旧 secret 已删；旧 PAT 待用户网页吊销；真实推送待下一次发版 |
 | T3 | 已签收 | （不入库） / tab `w3Z:t6` | 不入库 | 见 tmp 里的总结 |
 | T5 | 已签收 | `rel-debug-team` / tab `w3Z:t7`（pane `w3Z:p8`） | 本仓库 `ea1edb6`；skill 仓库提交（未推送） | 13 个脚本测试通过；两份 Local.xcconfig 为 `YU3FMV36N2`；Debug 构建签名为付费 Team |
-| T4 | 进行中 | `rel-sparkle` | | |
+| T4 | 进行中 | `rel-sparkle` / tab `w3Z:t8`（pane `w3Z:p9`） | | 监视器 bd9a2pucp |
