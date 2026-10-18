@@ -93,16 +93,11 @@ feed 固定为 `https://github.com/reorx/gapless-paste/releases/latest/download/
 
 `scripts/release/sparkle-tools.sh` 下载官方固定版本工具包并校验 SHA256。升级 Sparkle 时同时修改它与 `project.yml` 的版本和工具包校验和。`render-appcast.sh` 用 `sign_update -p` 签名，再用 `sign_update --verify <dmg> <signature>` 自校验，最后用 `xmllint` 解析 XML。**签名以后不能再改 dmg（包括 staple）**。
 
-本机密钥保存在登录钥匙串 account `gapless-paste`，备份为 `~/Sync/apple-developer/sparkle/gapless-paste_ed25519.key`（权限 600）。公钥固定在 `project.yml` 的 `SUPublicEDKey`。生成/导出一次即可，已有 account 必须复用：
+本机密钥保存在登录钥匙串 account `gapless-paste`，备份为 `~/Sync/apple-developer/sparkle/gapless-paste_ed25519.key`（权限 600）。公钥固定在 `project.yml` 的 `SUPublicEDKey`。用 skill 脚本配置 CI 的 Sparkle secret：备份文件或钥匙串里已有密钥时只复用，绝不重新生成或覆盖备份；只有两处都不存在时才生成。以下命令跳过 Apple 和 tap 凭据，仅配置 Sparkle：
 
 ```sh
-tools=$(scripts/release/sparkle-tools.sh)
-"$tools/generate_keys" --account gapless-paste
-umask 077
-mkdir -p ~/Sync/apple-developer/sparkle
-"$tools/generate_keys" --account gapless-paste -x ~/Sync/apple-developer/sparkle/gapless-paste_ed25519.key
-chmod 600 ~/Sync/apple-developer/sparkle/gapless-paste_ed25519.key
-gh secret set SPARKLE_ED_PRIVATE_KEY -R reorx/gapless-paste < ~/Sync/apple-developer/sparkle/gapless-paste_ed25519.key
+bash ~/.claude/skills/macos-app-release/scripts/setup-secrets.sh \
+  --repo reorx/gapless-paste --skip-apple --skip-tap --sparkle
 ```
 
 CI 只把该 secret 写入 `$RUNNER_TEMP/sparkle-ed25519.key`（600 权限），签完立即删除，`if: always()` 的清理步骤再兜底。本地默认从钥匙串签名，也可通过 `SPARKLE_PRIVATE_KEY_FILE` 指定备份文件。不能打印或提交私钥；丢失会阻断既有安装的更新信任链，不能靠重新生成密钥恢复。更换签名身份或 EdDSA 密钥时按 [Sparkle 官方密钥轮换文档](https://sparkle-project.org/documentation/#rotating-signing-keys) 单独设计迁移，不能同时更换两者。
