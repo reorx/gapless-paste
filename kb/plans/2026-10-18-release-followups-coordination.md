@@ -208,4 +208,5 @@ T5 另读 `~/.claude/skills/macos-app-bootstrap/SKILL.md` 和 `scripts/setup-sig
 | T3 | 已签收 | （不入库） / tab `w3Z:t6` | 不入库 | 见 tmp 里的总结 |
 | T5 | 已签收 | `rel-debug-team` / tab `w3Z:t7`（pane `w3Z:p8`） | 本仓库 `ea1edb6`；skill 仓库提交（未推送） | 13 个脚本测试通过；两份 Local.xcconfig 为 `YU3FMV36N2`；Debug 构建签名为付费 Team |
 | T4 | 已签收 | `rel-sparkle` / tab `w3Z:t8`（pane `w3Z:p9`） | 本仓库 `72d6de5`（已推送），v0.2.0 已发布 | CI run 39094671178；0.1.9 从真实 feed 更新到 0.2.0 实机通过；发布步骤改为不 clobber（T4 自定） |
-| T4b | 进行中 | `rel-sparkle`（沿用） | | |
+| T4b | 已签收 | `rel-sparkle`（沿用）/ tab `w3Z:t8` | skill 仓库提交（未推送） | 模板与 `72d6de5` 逐文件对照；actionlint、模板与密钥生命周期测试通过；真实复用已有密钥，备份 sha256 不变、无新 account |
+| T4c | 进行中 | `rel-sparkle`（沿用）/ tab `w3Z:t8` | | `kb/docs/release.md` 的密钥步骤改用 `setup-secrets.sh --sparkle` |
