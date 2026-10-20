@@ -13,7 +13,7 @@ macOS 菜单栏工具：把本机剪贴板里的截图/文件/文本以最少步
 - `README.md` — 面向用户的介绍（功能、安装、使用前提、配置格式、从源码构建）。仓库公开，功能、安装方式或配置格式变了要同步改它
 - `kb/docs/features.md` — 各功能的行为规则（上传、命名与重名、剪贴板同步、传输层、配置、Dock 形态）。改这些行为或菜单前读
 - `kb/docs/preview-window.md` — 预览窗口的导航、预览类型、缩放、导出、缓存规则。改预览窗口前读
-- `kb/docs/release.md` — 发版方式、CI 流程、secrets、cask 下载地址、本地出包与失败处理。发版或改发布链路前读
+- `kb/docs/release.md` — 发版方式、CI 流程、secrets、cask 下载地址、本地出包、产物验收与失败处理。发版或改发布链路前读
 - `kb/docs/ui-acceptance.md` — 验收通道、脚本清单、DEBUG 钩子、已踩过的坑。做真机 UI 验收或写新 AX 脚本前必读
 - `kb/plans/2026-10-20-menu-bar-summary-and-status-badge.md` — 已实现的 C 摘要＋右下角纯上下箭头徽标计划与验收记录；菜单宽 288 pt。Mockup 仅保存在 `tmp/2026-10-20-menu-bar-mockup/mockup/`，不入库
 - `kb/plans/2026-07-06-gapless-paste-v1-spec.md` — 原始需求与决策背景；部分内容已过时，现状以 `kb/docs/` 为准
@@ -62,7 +62,7 @@ make release-local   # 本地出已签名公证的 dmg（build-release / notariz
 
 ## CI
 
-`.github/workflows/release.yml`：push `v*` tag → Core 与发布脚本测试 → Universal Release 构建 → app、dmg 两轮签名公证 → 最终 dmg 的 EdDSA 签名与 appcast → 本仓库 Release → 更新 tap cask。发版就是 `git tag vX.Y.Z && git push origin vX.Y.Z`，版本号只来自 tag。Sparkle 固定版本在 `project.yml` 和 `scripts/release/sparkle-tools.sh`，升级时一起改并更新工具包 SHA256。密钥、feed 与发布细节见 `kb/docs/release.md`。
+`.github/workflows/release.yml`：push `v*` tag → Core 与发布脚本测试 → Universal Release 构建 → app、dmg 两轮签名公证 → 最终 dmg 的 EdDSA 签名与 appcast → 本仓库 Release → 更新 tap cask。发版就是 `git tag vX.Y.Z && git push origin vX.Y.Z`，版本号只来自 tag。Release 发布后不重写 tag 或替换产物，修复发新版本。Sparkle 固定版本在 `project.yml` 和 `scripts/release/sparkle-tools.sh`，升级时一起改并更新工具包 SHA256。密钥、feed 与发布细节见 `kb/docs/release.md`。
 
 ## 配置
 

@@ -1,12 +1,12 @@
 ---
 created: 2026-10-17
-updated: 2026-10-18
+updated: 2026-10-20
 tags: [release, signing, notarization, homebrew, ci]
 ---
 
 # 发布
 
-> 写给要发新版本、排查发布失败、或在新机器上本地出包的人。通用发布流程见 `~/.claude/skills/macos-app-release/SKILL.md`；Apple 凭据的权威说明在 `~/Sync/apple-developer/AGENTS.md`。
+> 写给要发新版本、排查发布失败、或在新机器上本地出包的人。通用发布流程见 `~/.agents/skills/macos-app-release/SKILL.md`；Apple 凭据的权威说明在 `~/Sync/apple-developer/AGENTS.md`。
 
 用户安装：
 
@@ -19,11 +19,11 @@ brew install --cask reorx/tap/gapless-paste
 在 master 上打 `vMAJOR.MINOR.PATCH` tag 并 push，其余全部由 CI 完成：
 
 ```sh
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
-版本号只来自 tag（`v0.2.0` → `CFBundleShortVersionString` 0.2.0），构建号取 CI 的 run number。`project.yml` 里的 `MARKETING_VERSION` 只是本地构建的占位，发版不用改它。
+版本号只来自 tag（`v0.3.0` → `CFBundleShortVersionString` 0.3.0），构建号取 CI 的 run number。`project.yml` 里的 `MARKETING_VERSION` 只是本地构建的占位，发版不用改它。Release 发布后不重写 tag 或替换产物，修复发新版本。
 
 ## CI 流程
 
@@ -53,6 +53,13 @@ homebrew job 可独立重跑（`gh run rerun <run-id> --job <job-id>`），同�
 
 Homebrew 7 默认只加载 trust 过的第三方 tap，新机器上先 `brew trust --tap reorx/tap`。
 
+cask 声明了 `auto_updates true`，普通 `brew upgrade` 会跳过它。日常可用应用内更新；需要用 Homebrew 主动升级时运行：
+
+```sh
+brew update
+brew upgrade --cask --greedy reorx/tap/gapless-paste
+```
+
 ## secrets
 
 | Secret | 内容 |
@@ -68,7 +75,7 @@ Homebrew 7 默认只加载 trust 过的第三方 tap，新机器上先 `brew tru
 Apple 与 tap 凭据由 skill 脚本一次配好（可重复执行，deploy key 会轮换）：
 
 ```sh
-bash ~/.claude/skills/macos-app-release/scripts/setup-secrets.sh --repo reorx/gapless-paste
+bash ~/.agents/skills/macos-app-release/scripts/setup-secrets.sh --repo reorx/gapless-paste
 ```
 
 ## 本地出包
@@ -79,7 +86,7 @@ make notarize-app      # 公证 app 并钉票据
 make dmg               # → dist/GaplessPaste-<version>.dmg
 make notarize          # 签 dmg + 公证 + staple + 终验
 make appcast           # 对最终 dmg 签名，生成 dist/appcast.xml 并自校验
-make release-local VERSION=0.2.0 BUILD_NUMBER=6 SPARKLE_PRIVATE_KEY_FILE="$HOME/Sync/apple-developer/sparkle/gapless-paste_ed25519.key"
+make release-local VERSION=0.3.0 BUILD_NUMBER=7 SPARKLE_PRIVATE_KEY_FILE="$HOME/Sync/apple-developer/sparkle/gapless-paste_ed25519.key"
 # 上述步骤连跑，不上传、不改 tap；指定密钥文件可避免本机首次访问钥匙串的授权弹窗
 ```
 
@@ -96,7 +103,7 @@ feed 固定为 `https://github.com/reorx/gapless-paste/releases/latest/download/
 本机密钥保存在登录钥匙串 account `gapless-paste`，备份为 `~/Sync/apple-developer/sparkle/gapless-paste_ed25519.key`（权限 600）。公钥固定在 `project.yml` 的 `SUPublicEDKey`。用 skill 脚本配置 CI 的 Sparkle secret：备份文件或钥匙串里已有密钥时只复用，绝不重新生成或覆盖备份；只有两处都不存在时才生成。以下命令跳过 Apple 和 tap 凭据，仅配置 Sparkle：
 
 ```sh
-bash ~/.claude/skills/macos-app-release/scripts/setup-secrets.sh \
+bash ~/.agents/skills/macos-app-release/scripts/setup-secrets.sh \
   --repo reorx/gapless-paste --skip-apple --skip-tap --sparkle
 ```
 
@@ -104,10 +111,21 @@ CI 只把该 secret 写入 `$RUNNER_TEMP/sparkle-ed25519.key`（600 权限），
 
 首次接入的实机验收用相同源码构建 0.1.9 / build 1、Developer ID 签名后放临时目录，从真实 feed 更新到 0.2.0；生产 v0.1.x 本身未内置 Sparkle，需要先经 dmg/Homebrew 升级一次。
 
+当前 feed、签名和公钥的分发检查已通过；真实每日自动检查提示并由用户确认安装的完整流程仍待自然触发验收，跟进项见 `kb/next-up.md`。
+
+## 发布后验收
+
+确认两个 CI job 都成功后，核对 Release 上有 dmg、`SHA256SUMS`、`appcast.xml`，tap 的版本和 sha256 与 Release 一致。下载实际发布的文件，检查 checksum、appcast 的版本／构建号／大小／下载地址与 EdDSA 签名，并核对 latest feed 指向本次发布。
+
+用户安装通道用 `brew fetch --cask reorx/tap/gapless-paste` 验下载，再用 `brew install --cask --appdir=<临时目录> reorx/tap/gapless-paste` 安装。检查 app 版本、双架构、嵌套签名与自身的 staple 票据；`spctl -a -t execute -vv <app>` 应显示 `source=Notarized Developer ID`，`syspolicy_check distribution <app>` 应通过。
+
+安装前先检查已有 cask 与同 Bundle ID 的运行实例。Debug 实例仍在运行时，不要用 `brew uninstall` 清验收包：cask 的 `uninstall quit` 会连 Debug 一起退出。仅对本次新建的临时安装，直接清理临时 app 和对应 Caskroom 目录。验证日志和下载产物留在 `tmp/<日期>-release-v<版本>/`，结果记入 `kb/sessions/`。真实的每日自动检查与用户确认安装需单独验证，文件和签名检查不能替代。
+
 ## 失败了怎么办
 
 - **只有 homebrew job 失败**（deploy key 失效、tap 冲突）：修好后在 Actions 页面 Re-run failed jobs。它只读已发布的 Release，不会重新签名公证
-- **release job 失败**：看日志里的步骤。公证被拒时脚本会自动打印 `notarytool log`。修好后删掉 tag 重打：`git push --delete origin vX.Y.Z && git tag -d vX.Y.Z`，前提是 Release 还没建出来
+- **release job 失败**：看日志里的步骤。公证被拒时脚本会自动打印 `notarytool log`。瞬态网络问题先重跑原 run；若需要改代码，修好后可删掉 tag 重打：`git push --delete origin vX.Y.Z && git tag -d vX.Y.Z`，前提是 Release 还没建出来
+- **重跑失败任务的 API 返回 500／502**：可改用 `gh run rerun <run-id>` 重跑整个 run，不重打 tag；run number 不变，Sparkle 构建号也不变
 - **stapler 报 Error 68 / network connection was lost**：stapler 访问 Apple CloudKit 时断连，GitHub 的 macOS runner 上常见（v0.1.1 前两次 CI 都是这样挂的），`notarize.sh` 的 stapler 调用已统一重试 5 次；仍失败就 Re-run failed jobs
 - Release 已发布后发现问题，发新版本，不要替换已发布的 dmg：tap 里的 sha256 和 asset id 都绑定旧文件
 
