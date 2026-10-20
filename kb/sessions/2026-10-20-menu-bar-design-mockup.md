@@ -14,11 +14,11 @@ tags:
 
 ## 修改的文件
 
-- `design/menu-bar/index.html`：对比页、控制面板、状态规则及 Apple 官方设计依据。
-- `design/menu-bar/style.css`：近似 macOS 菜单的字体、宽度、对齐、深浅外观、状态动画及窄屏排版。
-- `design/menu-bar/mockup.js`：样例、按实际文字宽度省略文件名、状态切换、可取消的模拟传输计时器、失败确认。
-- `design/menu-bar/README.md`：使用说明、方案取舍和原生实现边界。
-- `AGENTS.md`：增加设计稿入口，注明待选型。
+- `tmp/2026-10-20-menu-bar-mockup/mockup/index.html`：对比页、控制面板、状态规则及 Apple 官方设计依据。
+- `tmp/2026-10-20-menu-bar-mockup/mockup/style.css`：近似 macOS 菜单的字体、宽度、对齐、深浅外观、状态动画及窄屏排版。
+- `tmp/2026-10-20-menu-bar-mockup/mockup/mockup.js`：样例、按实际文字宽度省略文件名、状态切换、可取消的模拟传输计时器、失败确认。
+- `tmp/2026-10-20-menu-bar-mockup/mockup/README.md`：使用说明、方案取舍和原生实现边界。
+- `AGENTS.md`：指向已确认的实施计划和本地 Mockup。
 
 ## 注意事项
 
@@ -48,4 +48,10 @@ tags:
 ## 相关文档
 
 - [功能与行为规则](../docs/features.md) — 参考现有菜单和双向同步行为。
-- [HTML 方案说明](../../design/menu-bar/README.md) — 本次新增的交互稿及取舍说明。
+- [HTML 方案说明](../../tmp/2026-10-20-menu-bar-mockup/mockup/README.md) — 本次新增的交互稿及取舍说明。
+
+## 实施交接
+
+用户已授权按确认方案实施，并要求通过 Herdr 新 tab 执行。Mockup 已移入 `tmp/2026-10-20-menu-bar-mockup/mockup/`，从当前 Git 跟踪中移除；保留本地文件，不重写已有提交历史。
+
+- [实施计划](../plans/2026-10-20-menu-bar-summary-and-status-badge.md) — PRD、结构化操作状态、徽标反馈、原生验收及交付标准，作为新 tab 的任务 brief。
