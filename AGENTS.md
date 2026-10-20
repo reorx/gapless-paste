@@ -15,6 +15,7 @@ macOS 菜单栏工具：把本机剪贴板里的截图/文件/文本以最少步
 - `kb/docs/preview-window.md` — 预览窗口的导航、预览类型、缩放、导出、缓存规则。改预览窗口前读
 - `kb/docs/release.md` — 发版方式、CI 流程、secrets、cask 下载地址、本地出包与失败处理。发版或改发布链路前读
 - `kb/docs/ui-acceptance.md` — 验收通道、脚本清单、DEBUG 钩子、已踩过的坑。做真机 UI 验收或写新 AX 脚本前必读
+- `design/menu-bar/index.html` — 菜单摘要与状态图标的本地交互对比稿；待用户选型，非已实现规格，说明见同目录 `README.md`
 - `kb/plans/2026-07-06-gapless-paste-v1-spec.md` — 原始需求与决策背景；部分内容已过时，现状以 `kb/docs/` 为准
 - `kb/sessions/` — 历次改动；`kb/known-issues.md` — 未解决问题与未验收项
 
