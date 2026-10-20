@@ -20,7 +20,20 @@ import AppKit
 
 @MainActor
 enum DebugHooks {
-    static func install(appState: AppState) {
+    static func install(appState: AppState, menuController: StatusMenuController) {
+        DistributedNotificationCenter.default().addObserver(
+            forName: .init("com.reorx.gaplesspaste.debug.transfer"), object: nil, queue: .main
+        ) { [weak appState, weak menuController] notification in
+            guard let spec = notification.object as? String,
+                  let parts = try? JSONDecoder().decode([String].self, from: Data(spec.utf8)) else { return }
+            Task { @MainActor in
+                if ["export", "dump", "open-menu", "key", "appearance", "reduce-motion"].contains(parts.first) {
+                    menuController?.debugTransfer(parts)
+                } else {
+                    appState?.debugTransfer(parts)
+                }
+            }
+        }
         DistributedNotificationCenter.default().addObserver(
             forName: Notification.Name("com.reorx.gaplesspaste.debug.capture"),
             object: nil,

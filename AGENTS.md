@@ -4,7 +4,7 @@ macOS 菜单栏工具：把本机剪贴板里的截图/文件/文本以最少步
 
 ## 功能现状
 
-- 已实现：目录上传、快速上传、拖拽上传、剪贴板双向同步、预览远端目录窗口、设置窗口、窗口打开时的 Dock 形态、Sparkle 应用内更新
+- 已实现：目录上传、快速上传、拖拽上传、剪贴板双向同步、两行传输摘要与详情、菜单栏状态徽标、预览远端目录窗口、设置窗口、窗口打开时的 Dock 形态、Sparkle 应用内更新
 - 未实现：全局热键、登录启动项、浏览器图像数据拖拽
 - 远端剪贴板注入只支持 macOS 远端；非 Darwin 时同步菜单项置灰，图像上传降级为回传路径
 
@@ -15,7 +15,7 @@ macOS 菜单栏工具：把本机剪贴板里的截图/文件/文本以最少步
 - `kb/docs/preview-window.md` — 预览窗口的导航、预览类型、缩放、导出、缓存规则。改预览窗口前读
 - `kb/docs/release.md` — 发版方式、CI 流程、secrets、cask 下载地址、本地出包与失败处理。发版或改发布链路前读
 - `kb/docs/ui-acceptance.md` — 验收通道、脚本清单、DEBUG 钩子、已踩过的坑。做真机 UI 验收或写新 AX 脚本前必读
-- `kb/plans/2026-10-20-menu-bar-summary-and-status-badge.md` — 已确认的 C 摘要＋右下角纯上下箭头徽标实施计划；Mockup 仅保存在 `tmp/2026-10-20-menu-bar-mockup/mockup/`，不入库
+- `kb/plans/2026-10-20-menu-bar-summary-and-status-badge.md` — 已实现的 C 摘要＋右下角纯上下箭头徽标计划与验收记录；菜单宽 288 pt。Mockup 仅保存在 `tmp/2026-10-20-menu-bar-mockup/mockup/`，不入库
 - `kb/plans/2026-07-06-gapless-paste-v1-spec.md` — 原始需求与决策背景；部分内容已过时，现状以 `kb/docs/` 为准
 - `kb/sessions/` — 历次改动；`kb/known-issues.md` — 未解决问题与未验收项
 
@@ -40,6 +40,7 @@ macOS 菜单栏工具：把本机剪贴板里的截图/文件/文本以最少步
 make build       # xcodegen + Debug 构建
 make test        # GaplessPasteCore 单测
 make test-release # 发布脚本行为测试（appcast / 嵌套签名 / cask）
+make test-dock   # DEBUG 真机 Dock 生命周期回归（先 build + run，会关闭普通窗口）
 make run         # kill 旧实例并启动已构建的 app（不触发构建）
 make dev         # build + run
 make gen         # 仅重新生成 xcodeproj
@@ -74,6 +75,7 @@ make release-local   # 本地出已签名公证的 dmg（build-release / notariz
 - 截 app 窗口用自截图：`swift scripts/capture.swift <输出目录>`（DEBUG 构建，零 TCC 授权，熄屏和 SSH 会话下也可用）
 - 操作界面用 `scripts/` 下的 AX 脚本；写新 AX 脚本前先跑 `ax_dump.applescript` 看真实结构
 - 开预览窗口不走菜单，用 `swift scripts/preview_open.swift <机器名> <路径>`
+- 传输摘要／徽标验收用 `swift scripts/transfer_debug.swift`（fixture、dump、details、open-menu 等，见验收手册）；仅 DEBUG。状态模型在 Core 的 `TransferPresentation.swift`，不从展示字符串反推状态
 - 操作前先 `wake-screen`：本机没有锁屏、只会熄屏，但熄屏时 `screen_locked.swift` 同样打印 `locked`，AX、按键、鼠标全部假失败，唤醒后即恢复（SSH 会话里也有效）。唤醒后仍是 `locked` 才是真锁屏，那时改用 DEBUG 钩子验模型逻辑，验不了的项登记到 `kb/known-issues.md`
 - `ax_fill` 会覆盖剪贴板，操作前备份、结束后恢复
 - 不要为验收安装新的自动化工具（需要用户手动过 TCC 授权）

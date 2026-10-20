@@ -4,7 +4,7 @@ APP := $(DERIVED_DATA)/Build/Products/Debug/GaplessPaste.app
 XCODEBUILD := xcodebuild -project GaplessPaste.xcodeproj -scheme GaplessPaste \
 	-destination 'platform=macOS' -derivedDataPath $(DERIVED_DATA)
 
-.PHONY: gen build test test-release run dev clean build-release notarize-app dmg notarize appcast release-local
+.PHONY: gen build test test-dock test-release run dev clean build-release notarize-app dmg notarize appcast release-local
 
 RELEASE_APP := $(DERIVED_DATA)/Build/Products/Release/GaplessPaste.app
 DIST := dist
@@ -54,6 +54,10 @@ release-local: build-release
 # GaplessPasteCore 纯逻辑单测
 test:
 	cd GaplessPasteCore && swift test
+
+# 真机 Dock 存续回归（DEBUG app 已运行；会关闭 app 普通窗口）
+test-dock:
+	uv run scripts/test_dock_presence.py
 
 test-release:
 	scripts/release/test-release.sh

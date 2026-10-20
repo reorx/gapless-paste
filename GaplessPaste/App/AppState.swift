@@ -39,13 +39,49 @@ final class AppState {
     /// 打开中的预览窗口（可多开），关窗时自移除
     private var previewControllers: [PreviewWindowController] = []
 
-    private(set) var isBusy = false
-    private(set) var statusLine: String?
-    /// 上次操作（成功或失败）的完成时刻，菜单据此显示相对时间
-    private(set) var lastFinishedAt: Date?
+    private(set) var presentation = TransferPresentation()
+    var onPresentationChange: (() -> Void)?
+    var isBusy: Bool { presentation.isBusy }
     private(set) var lastRemotePaths: [String] = []
-    private(set) var hasRetryableFailure = false
+    var hasRetryableFailure: Bool { presentation.record?.outcome == .failure && retryAction != nil }
     private var retryAction: (() -> Void)?
+    private var feedbackExpiry: DispatchWorkItem?
+    private var detailControllers: [TransferDetailsWindowController] = []
+    #if DEBUG
+    private var debugInjectionFailure: String?
+    #endif
+
+    /// MainActor 上唯一展示状态写入口；先完成业务状态更新，再通知菜单与徽标。
+    func updatePresentation(_ change: (inout TransferPresentation) -> Void) {
+        change(&presentation)
+        feedbackExpiry?.cancel()
+        feedbackExpiry = nil
+        if presentation.feedback == .success, let record = presentation.record, let finished = record.finishedAt {
+            let work = DispatchWorkItem { [weak self] in
+                self?.updatePresentation { $0.expireSuccess(id: record.id, at: Date()) }
+            }
+            feedbackExpiry = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + max(0, 2 - Date().timeIntervalSince(finished)), execute: work)
+        }
+        onPresentationChange?()
+    }
+
+    private func beginTransfer(_ operation: TransferRecord.Operation, machine: Machine, directory: String? = nil, content: TransferContent) -> UUID {
+        let record = TransferRecord(operation: operation, machine: machine.name, directory: directory, content: content)
+        updatePresentation { $0.begin(record) }
+        return record.id
+    }
+
+    func showTransferDetails() {
+        guard let record = presentation.record else { return }
+        let controller = TransferDetailsWindowController(record: record)
+        controller.onClose = { [weak self, weak controller] in
+            self?.detailControllers.removeAll { $0 === controller }
+        }
+        detailControllers.append(controller)
+        controller.show()
+        updatePresentation { $0.acknowledge(id: record.id) }
+    }
 
     /// 待上传的本地文件 + 期望的远端文件名（重试时原样重放，图像不再重新弹窗）
     private struct Payload {
@@ -296,56 +332,66 @@ final class AppState {
     private func transfer(machine: Machine, directory: RemoteDirectory, payload: Payload) {
         Task {
             guard !isBusy else { return }
-            isBusy = true
-            statusLine = "进行中：上传到 \(machine.name)/\(directory.name)…"
-            defer { isBusy = false }
+            let metadata = TransferContent(
+                kind: payload.isImage ? .image : .files,
+                fileNames: payload.items.map { URL(fileURLWithPath: $0.localPath).lastPathComponent },
+                byteCount: fileByteCount(payload.items.map { URL(fileURLWithPath: $0.localPath) })
+            )
+            let id = beginTransfer(.upload, machine: machine, directory: directory.path, content: metadata)
+            // 只有全部文件落盘后才赋值；此后的异常属于剪贴板注入失败，不能重传。
+            var uploadedPaths: [String] = []
             do {
                 let (probe, remotePaths) = try await performTransfer(machine: machine, directory: directory, payload: payload)
+                uploadedPaths = remotePaths
                 lastRemotePaths = remotePaths
-                hasRetryableFailure = false
                 retryAction = nil
                 if payload.writePathsBackToClipboard {
                     pasteboard.writeText(remotePaths.joined(separator: "\n"))
                 }
-                let names = payload.items.map(\.desiredName).joined(separator: ", ")
                 let joinedPaths = remotePaths.joined(separator: "\n")
                 var noteTitle = "已上传到 \(machine.name)/\(directory.name)"
                 var noteBody = joinedPaths
                 if payload.isImage {
                     if let inject = RemoteClipboard.imageInjectionCommand(probe: probe, remoteImagePath: remotePaths[0]) {
-                        // M2：图像上传成功后追加注入远端剪贴板，远端 Claude Code 可直接 Ctrl+V。
-                        // 注入失败不当作整体失败（上传已成功，重试会造成重名副本），
-                        // 路径仍可经「拷贝上次上传的远端路径」取回
-                        let result = try await runner.run(commandBuilder.sshCommand(host: machine.sshAlias, remoteCommand: inject), timeout: 20)
-                        if result.succeeded {
-                            noteTitle = "已上传并注入远端剪贴板"
-                            noteBody = "\(joinedPaths)\n远端 Ctrl+V 可用"
-                        } else {
-                            log.error("注入远端剪贴板失败：\(result.firstStderrLine)")
-                            noteTitle = "已上传，但注入远端剪贴板失败"
-                            noteBody = "\(result.firstStderrLine)\n\(joinedPaths)"
+                        let result = try await injectUploadedImage(host: machine.sshAlias, command: inject)
+                        guard result.succeeded else {
+                            throw AppError.commandFailed(operation: "注入远端剪贴板", detail: result.firstStderrLine)
                         }
+                        noteTitle = "已上传并注入远端剪贴板"
+                        noteBody = "\(joinedPaths)\n远端 Ctrl+V 可用"
                     } else {
-                        // 非 Darwin 无剪贴板注入：自动降级为路径模式
                         pasteboard.writeText(joinedPaths)
                         noteBody = "远端无剪贴板注入，已拷贝路径\n\(joinedPaths)"
                     }
                 }
-                statusLine = "上次：✓ \(names) → \(machine.name)/\(directory.name)"
-                lastFinishedAt = Date()
+                updatePresentation { $0.finish(id: id, outcome: .success, at: Date(), remotePaths: remotePaths) }
                 log.info("上传成功：\n\(joinedPaths)")
                 notifier.notify(title: noteTitle, body: noteBody)
             } catch {
-                statusLine = "上次：✗ \(error.localizedDescription)"
-                lastFinishedAt = Date()
-                hasRetryableFailure = true
-                retryAction = { [weak self] in
+                let partial = !uploadedPaths.isEmpty
+                retryAction = partial ? nil : { [weak self] in
                     self?.transfer(machine: machine, directory: directory, payload: payload)
                 }
-                log.error("上传失败：\(error.localizedDescription)")
-                notifier.notify(title: "上传失败", body: error.localizedDescription)
+                updatePresentation {
+                    $0.finish(id: id, outcome: partial ? .partialSuccess : .failure, at: Date(),
+                              message: error.localizedDescription, remotePaths: uploadedPaths)
+                }
+                let title = partial ? "已上传，剪贴板写入失败" : "上传失败"
+                log.error("\(title)：\(error.localizedDescription)")
+                notifier.notify(title: title, body: ([error.localizedDescription] + uploadedPaths).joined(separator: "\n"))
             }
         }
+    }
+
+    private func injectUploadedImage(host: String, command: String) async throws -> CommandResult {
+        #if DEBUG
+        // 验收两条失败路径，文件上传仍走真实 ssh/scp；Release 无此控制入口。
+        let failure = debugInjectionFailure
+        debugInjectionFailure = nil
+        if failure == "throw" { throw SSHRunnerError.timeout(seconds: 20) }
+        if failure == "exit" { return CommandResult(exitCode: 1, stdout: "", stderr: "DEBUG clipboard injection failed") }
+        #endif
+        return try await runner.run(commandBuilder.sshCommand(host: host, remoteCommand: command), timeout: 20)
     }
 
     /// 探测 → 展开路径 → mkdir -p → 重名探测 → 逐个 scp，返回探测结果与远端绝对路径
@@ -415,33 +461,27 @@ final class AppState {
     private func sync(machine: Machine, content: ClassifiedContent) {
         Task {
             guard !isBusy else { return }
-            isBusy = true
-            statusLine = "进行中：同步剪贴板到 \(machine.name)…"
-            defer { isBusy = false }
+            let id = beginTransfer(.pushClipboard, machine: machine, content: contentMetadata(content))
             do {
                 let probe = try await probeService.probe(machine.sshAlias)
                 guard case .steps = TransferPlanner.syncPlan(for: content, remoteIsDarwin: probe.isDarwin) else {
                     // 此处只剩非 Darwin 一种拒绝（内容拒绝已在 prepareAndSync 先行）；
                     // 探测结果已入缓存，菜单下次打开即置灰
-                    statusLine = nil
+                    updatePresentation { $0.abandon(id: id) }
                     log.info("拒绝：\(SyncRejection.remoteClipboardUnsupported.userMessage)")
                     notifier.notify(title: "GaplessPaste", body: SyncRejection.remoteClipboardUnsupported.userMessage)
                     return
                 }
-                let summary = try await performSync(machine: machine, probe: probe, content: content)
-                hasRetryableFailure = false
+                let summary = try await performSync(machine: machine, probe: probe, content: content, id: id)
                 retryAction = nil
-                statusLine = "上次：✓ 剪贴板（\(summary)）→ \(machine.name)"
-                lastFinishedAt = Date()
+                updatePresentation { $0.finish(id: id, outcome: .success, at: Date()) }
                 log.info("同步剪贴板成功：\(summary) → \(machine.name)")
                 notifier.notify(title: "已同步剪贴板到 \(machine.name)", body: "\(summary)，远端 Ctrl+V / ⌘V 可用")
             } catch {
-                statusLine = "上次：✗ \(error.localizedDescription)"
-                lastFinishedAt = Date()
-                hasRetryableFailure = true
                 retryAction = { [weak self] in
                     self?.sync(machine: machine, content: content)
                 }
+                updatePresentation { $0.finish(id: id, outcome: .failure, at: Date(), message: error.localizedDescription) }
                 log.error("同步剪贴板失败：\(error.localizedDescription)")
                 notifier.notify(title: "同步剪贴板失败", body: error.localizedDescription)
             }
@@ -455,14 +495,12 @@ final class AppState {
     func syncClipboardFromRemote(machine: Machine) {
         Task {
             guard !isBusy else { return }
-            isBusy = true
-            statusLine = "进行中：从 \(machine.name) 同步剪贴板…"
-            defer { isBusy = false }
+            let id = beginTransfer(.pullClipboard, machine: machine, content: .init(kind: .clipboard))
             do {
                 let probe = try await probeService.probe(machine.sshAlias)
                 guard let extract = RemoteClipboard.imageExtractionCommand(probe: probe) else {
                     // 非 Darwin：与推送方向同一拒绝语义，探测结果已入缓存，菜单下次打开即置灰
-                    statusLine = nil
+                    updatePresentation { $0.abandon(id: id) }
                     log.info("拒绝：\(SyncRejection.remoteClipboardUnsupported.userMessage)")
                     notifier.notify(title: "GaplessPaste", body: SyncRejection.remoteClipboardUnsupported.userMessage)
                     return
@@ -476,6 +514,7 @@ final class AppState {
                 switch RemoteClipboard.parseImageExtractionOutput(result.stdout) {
                 case .imagePNG(let png):
                     pasteboard.writeImagePNG(png)
+                    updatePresentation { $0.updateContent(id: id, content: .init(kind: .image, byteCount: png.count)) }
                     summary = "图像 \(DisplayFormatter.byteCountText(png.count))"
                 case .notImage:
                     let textCommand = RemoteClipboard.textExtractionCommand(probe: probe)!
@@ -484,29 +523,26 @@ final class AppState {
                         throw AppError.commandFailed(operation: "读取远端剪贴板文本", detail: textResult.firstStderrLine)
                     }
                     guard !textResult.stdout.isEmpty else {
-                        statusLine = nil
+                        updatePresentation { $0.abandon(id: id) }
                         log.info("从 \(machine.name) 同步剪贴板：远端剪贴板为空")
                         notifier.notify(title: "GaplessPaste", body: "\(machine.name) 的剪贴板是空的")
                         return
                     }
                     pasteboard.writeText(textResult.stdout)
+                    updatePresentation { $0.updateContent(id: id, content: .init(kind: .text, characterCount: textResult.stdout.count)) }
                     summary = "文本 \(textResult.stdout.count) 字符"
                 case .unrecognized:
                     throw AppError.commandFailed(operation: "读取远端剪贴板", detail: "无法识别的远端输出")
                 }
-                hasRetryableFailure = false
                 retryAction = nil
-                statusLine = "上次：✓ \(machine.name) 剪贴板（\(summary)）→ 本机"
-                lastFinishedAt = Date()
+                updatePresentation { $0.finish(id: id, outcome: .success, at: Date()) }
                 log.info("从远端同步剪贴板成功：\(machine.name) → 本机，\(summary)")
                 notifier.notify(title: "已从 \(machine.name) 同步剪贴板", body: "\(summary)，本机 ⌘V 可用")
             } catch {
-                statusLine = "上次：✗ \(error.localizedDescription)"
-                lastFinishedAt = Date()
-                hasRetryableFailure = true
                 retryAction = { [weak self] in
                     self?.syncClipboardFromRemote(machine: machine)
                 }
+                updatePresentation { $0.finish(id: id, outcome: .failure, at: Date(), message: error.localizedDescription) }
                 log.error("从远端同步剪贴板失败：\(error.localizedDescription)")
                 notifier.notify(title: "从远端同步剪贴板失败", body: error.localizedDescription)
             }
@@ -516,7 +552,7 @@ final class AppState {
     /// 图像：写本地临时 PNG → scp 到固定远端临时路径（每次覆盖）→ osascript 注入；
     /// 单个图片文件引用：读文件转 PNG 后走同一图像路径；
     /// 文本：直接 ssh pbcopy（stdin 传输）。返回通知用的内容摘要
-    private func performSync(machine: Machine, probe: ProbeResult, content: ClassifiedContent) async throws -> String {
+    private func performSync(machine: Machine, probe: ProbeResult, content: ClassifiedContent, id: UUID) async throws -> String {
         let host = machine.sshAlias
         switch content {
         case .imageData(let png):
@@ -527,6 +563,7 @@ final class AppState {
             guard let url = urls.first, let png = PasteboardService.pngData(fromImageFile: url) else {
                 throw AppError.commandFailed(operation: "读取图片文件", detail: urls.first?.lastPathComponent ?? "")
             }
+            updatePresentation { $0.updateContent(id: id, content: .init(kind: .image, fileNames: [url.lastPathComponent], byteCount: png.count)) }
             try await syncImage(png: png, host: host, probe: probe)
             return "图片文件 \(url.lastPathComponent)（\(DisplayFormatter.byteCountText(png.count))）"
         case .text(let text):
@@ -574,6 +611,26 @@ final class AppState {
         }
     }
 
+    private func contentMetadata(_ content: ClassifiedContent) -> TransferContent {
+        switch content {
+        case .imageData(let png): return .init(kind: .image, byteCount: png.count)
+        case .text(let text): return .init(kind: .text, characterCount: text.count)
+        case .fileReferences(let urls):
+            return .init(kind: .image, fileNames: urls.map(\.lastPathComponent), byteCount: fileByteCount(urls))
+        case .empty: return .init(kind: .clipboard)
+        }
+    }
+
+    private func fileByteCount(_ urls: [URL]) -> Int? {
+        var total = 0
+        for url in urls {
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
+                  values.isRegularFile == true, let size = values.fileSize else { return nil }
+            total += size
+        }
+        return total
+    }
+
     private func describe(_ content: ClassifiedContent) -> String {
         switch content {
         case .fileReferences(let urls):
@@ -597,3 +654,64 @@ final class AppState {
         }
     }
 }
+
+#if DEBUG
+extension AppState {
+    /// 仅内存 fixture；action 仍调用真实业务入口，不改用户配置。
+    func debugTransfer(_ parts: [String]) {
+        guard let command = parts.first else { return }
+        switch command {
+        case "fixture":
+            guard parts.count > 1 else { return }
+            retryAction = nil
+            updatePresentation { $0 = TransferPresentation() }
+            let fixture = parts[1]
+            guard fixture != "empty" else { return }
+            let operation: TransferRecord.Operation = fixture == "receiving" ? .pullClipboard : (fixture == "text" ? .pushClipboard : .upload)
+            let names = [String(repeating: "很长的中文文件名与-English-name-", count: 12) + ".png", "second-file.pdf", "third-file.txt"]
+            let content = fixture == "text" ? TransferContent(kind: .text, characterCount: 2048) : TransferContent(kind: .files, fileNames: names, byteCount: 2_621_440)
+            let record = TransferRecord(operation: operation,
+                machine: fixture == "long-machine" ? "mini-" + String(repeating: "超长机器名-", count: 25) + "-office" : "mini",
+                directory: "~/claude-inbox", content: content, startedAt: Date().addingTimeInterval(-5))
+            updatePresentation { $0.begin(record) }
+            if ["sending", "receiving"].contains(fixture) { return }
+            let outcome: TransferRecord.Outcome = fixture == "failure" ? .failure : (fixture == "partial" ? .partialSuccess : .success)
+            if outcome == .failure { retryAction = { [weak self] in self?.debugTransfer(["fixture", "sending"]) } }
+            updatePresentation {
+                $0.finish(id: record.id, outcome: outcome, at: Date(),
+                    message: outcome == .success ? nil : String(repeating: "Permission denied：无法写入远端剪贴板。\n", count: 35),
+                    remotePaths: outcome == .partialSuccess ? ["/tmp/fixture.png"] : [])
+            }
+        case "action":
+            guard parts.count >= 4, !isBusy else { return }
+            let directory = RemoteDirectory(name: "验收目录", path: parts[3], defaultOf: .file)
+            let machine = Machine(name: "验收 localhost", sshAlias: parts[2], directories: [directory])
+            switch parts[1] {
+            case "upload": upload(machine: machine, directory: directory)
+            case "quick": quickUpload(machine: machine)
+            case "push": syncClipboard(machine: machine)
+            case "pull": syncClipboardFromRemote(machine: machine)
+            case "drop": uploadDroppedFiles(parts.dropFirst(4).map { URL(fileURLWithPath: $0) }, machine: machine, directory: directory)
+            case "image-exit", "image-throw":
+                guard parts.count > 4 else { return }
+                debugInjectionFailure = parts[1] == "image-exit" ? "exit" : "throw"
+                let url = URL(fileURLWithPath: parts[4])
+                transfer(machine: machine, directory: directory,
+                    payload: Payload(items: [(url.path, url.lastPathComponent)], writePathsBackToClipboard: false, isImage: true))
+            default: break
+            }
+        case "details": showTransferDetails()
+        case "retry": retryLastOperation()
+        case "windows":
+            guard parts.count > 1 else { return }
+            switch parts[1] {
+            case "settings": openSettings()
+            case "preview": openPreviewWindow(machine: Machine(name: "localhost", sshAlias: "localhost", directories: []), path: "/tmp")
+            case "close": DockPresence.debugCloseWindows()
+            default: break
+            }
+        default: break
+        }
+    }
+}
+#endif

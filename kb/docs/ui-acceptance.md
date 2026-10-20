@@ -1,5 +1,6 @@
 ---
 created: 2026-09-28
+updated: 2026-10-20
 tags:
   - ui-automation
   - acceptance
@@ -18,7 +19,7 @@ tags:
 | --- | --- | --- |
 | AppleScript AX（`scripts/ax_*.applescript`、`menu_*.applescript`） | 点按钮、填文本、选行、读菜单 | 终端有 Accessibility 授权（iTerm2 已有）；屏幕亮着 |
 | app 自截图（`scripts/capture.swift`） | 截 app 自己的窗口 | 仅 DEBUG 构建；不需要任何 TCC 授权，熄屏和 SSH 远程会话下也能用 |
-| DEBUG 钩子（`scripts/preview_open.swift`、`preview_action.swift`） | 绕过菜单和弹窗直达目标状态 | 仅 DEBUG 构建；熄屏下也能用 |
+| DEBUG 钩子（`scripts/preview_open.swift`、`preview_action.swift`、`transfer_debug.swift`） | 绕过菜单和弹窗直达目标状态、传输夹具和图标导出 | 仅 DEBUG 构建；模型与窗口操作熄屏下也能用，原生菜单仍需亮屏 |
 | `screencapture` | 截整个屏幕或菜单栏 | 只在本机 iTerm2 会话里可用（2026-09-28 实测）；屏幕熄着时截到的是黑图 |
 | `cua-computer-use` MCP | 通用的后台 GUI 自动化 | CuaDriver 已有 Accessibility 和 Screen Recording 授权；**尚未在本项目验证过** |
 
@@ -30,7 +31,7 @@ tags:
 
 1. **唤醒屏幕**：跑 `wake-screen`，它确认屏幕可用后才退出 0。长验收用 `caffeinate -d -t 1800` 保持亮屏
 2. **确认可操作**：`swift scripts/screen_locked.swift` 应打印 `unlocked`
-3. **备份**：将被改动的真实数据（如 `config.json`）和用户剪贴板（`pbpaste`）
+3. **备份**：将被改动的真实数据（如 `config.json`）备份；剪贴板须逐 item/type 备份原始 Data，`pbpaste` 只能保留纯文本，不能完整恢复图像和文件引用
 
 ### 熄屏看起来和锁屏一模一样
 
@@ -71,18 +72,21 @@ tags:
 | `preview_open.swift <机器名> <路径>` | 直接打开预览窗口，跳过菜单和路径弹窗 |
 | `preview_action.swift '<指令>'` | 驱动最近打开的预览窗口：`up`、`enter\|<路径>`、`select\|<路径>…`、`refresh`、`dump` |
 | `screen_locked.swift` | 打印 `locked` / `unlocked`。熄屏时也打印 `locked`，先 `wake-screen` 再跑 |
+| `transfer_debug.swift <指令> [参数…]` | 传输摘要、徽标、详情与真实业务入口验收，见下文 |
+| `test_dock_presence.py` | 用 `make test-dock` 运行真机 Dock 回归；需已启动 DEBUG app、AX 可用，会关闭普通窗口 |
 
 长期有用的验收脚本放 `scripts/`（入库），一次性的探索脚本放 `tmp/`（不入库）。
 
 ## DEBUG 钩子
 
-app 的 DEBUG 构建监听三个分布式通知，上面的 Swift 脚本就是它们的发送端：
+app 的 DEBUG 构建监听以下分布式通知，上面的 Swift 脚本就是它们的发送端：
 
 | 通知名 | 作用 |
 | --- | --- |
 | `com.reorx.gaplesspaste.debug.capture` | 自截图 |
 | `com.reorx.gaplesspaste.debug.preview` | 打开预览窗口 |
 | `com.reorx.gaplesspaste.debug.preview-action` | 驱动预览窗口 |
+| `com.reorx.gaplesspaste.debug.transfer` | 驱动传输验收；object 是 JSON 字符串数组，避免路径／文件名分隔符歧义 |
 
 什么时候用钩子而不是 AX：
 
@@ -90,6 +94,29 @@ app 的 DEBUG 构建监听三个分布式通知，上面的 Swift 脚本就是�
 - **只验模型逻辑，或遇到真锁屏**：用 `preview_action.swift` 驱动导航、选中、刷新，再发 `dump` 把窗口状态写进日志核对（在日志里找「DEBUG 预览状态」）。导航是异步的，`dump` 要等动作完成后单独发
 
 遇到新的验收堵点，优先加一个同类钩子，不要硬磕 AX。
+
+### 传输摘要与徽标
+
+`swift scripts/transfer_debug.swift` 支持以下指令，全部仅存在于 DEBUG：
+
+| 指令 | 用途 |
+| --- | --- |
+| `fixture empty\|sending\|receiving\|long-machine\|text\|failure\|partial` | 替换内存状态，不执行网络／剪贴板操作；长名称、多文件和长错误夹具 |
+| `dump <JSON绝对路径>` | 导出状态、元数据、徽标动画、按钮屏幕坐标、AX 描述、activation policy、窗口标题及最近 40 条 Dock 转换记录 |
+| `details` / `retry` | 调用当前详情／重试业务入口；详情窗口是稳定快照，打开失败详情只确认对应 ID |
+| `open-menu` | 由原生 status button 打开真实菜单，便于坐标或 AX 截图；本身不证明键盘／鼠标操作通过 |
+| `key down\|return\|escape` | 向 app 事件队列投递原生按键；可验菜单导航与选中态，区别于系统级 CGEvent／物理键盘 |
+| `export <目录>` | 导出 5 种徽标的深浅色 1×／2× PNG；只是绘制资产，不能替代真实菜单栏截图 |
+| `appearance light\|dark\|system` | 临时覆盖 app 外观，不改系统偏好；结束用 `system` 恢复 |
+| `reduce-motion on\|off\|system` | 临时覆盖动画分支，不改系统偏好；结束用 `system` 恢复。系统通知链路仍须与真实系统切换区分 |
+| `windows settings\|preview\|close` | 打开设置／localhost `/tmp` 预览，或关闭被追踪的普通窗口；用于 Dock 回归 |
+| `action <动作> <SSH别名> <远端目录> [本地文件…]` | 临时机器调用真实上传／同步入口，不改配置，**会实际传输并改变剪贴板** |
+
+真实动作包括 `upload`、`quick`、`push`、`pull`、`drop`；`drop` 参数为本地文件列表，只覆盖 drop 的业务入口，不能替代物理拖拽手势。`image-exit` / `image-throw` 接收本地图像文件，先实际上传，再分别模拟剪贴板注入非零退出／抛出异常；用于确认部分成功保留路径、无重传。验完恢复完整剪贴板，核对远端文件内容／数量与本地配置。
+
+`open-menu` 必须脱离 Swift MainActor Task 后进入 tracking：当前用 common run-loop block 调 `performClick`，否则同步嵌套 tracking 会占住 actor，后续 fixture／dump 不能执行。读 dump 前删除旧 JSON，确认收到本次输出，避免把旧文件误当菜单展开期间的实时更新证据。菜单刚打开时可能需先按一次 Down 进入键盘导航，再按 Down 选中详情；以真实选中态和详情窗口 AX 树为准。
+
+`make test-dock` 同时检查实际 Dock 项与 app 的 activation policy，覆盖无窗口、仅详情、仅设置、混合窗口依次关闭。最小化仍属于有窗口，不能按关闭处理。
 
 ## 用本机充当远端
 
@@ -109,6 +136,7 @@ app 的 DEBUG 构建监听三个分布式通知，上面的 Swift 脚本就是�
 - List 行选中：对 row 元素 `set selected to true` 有效，对行内文本做 `AXPress` 无效
 - AppleScript 的 `click` 发不出双击，SwiftUI 的双击手势收不到，所以双击要走 `mouse_double_click.swift`
 - 状态栏菜单的位置是 `menu bar item 1 of menu bar 2 of process "GaplessPaste"`，`key code 53`（Esc）收起菜单
+- Thaw 等菜单栏管理工具可能把 status item 移到屏幕外（`dump` 中 x 为负数），此时 AX click 可能只展开管理工具的栏，不能视为 app 菜单打开。先核对菜单真实位置与尺寸；必要时临时退出管理工具，验完恢复。`open-menu` 能绕开按钮点击，但合成按键／AXPress 仍可能静默失效，报告要区分钩子、实际手势与用户手工验收
 
 **文本输入**
 
