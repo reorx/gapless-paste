@@ -5,6 +5,8 @@ const paths = {
   board: '<path d="M8 5H5v16h14V5h-3"/><rect x="8" y="3" width="8" height="4" rx="1"/>',
   upload: '<path d="M12 16V3m-5 5 5-5 5 5M5 16v5h14v-5"/>',
   download: '<path d="M12 3v13m-5-5 5 5 5-5M5 17v4h14v-4"/>',
+  arrowUp: '<path d="M12 21V3m-7 7 7-7 7 7"/>',
+  arrowDown: '<path d="M12 3v18m-7-7 7 7 7-7"/>',
   arrow: '<path d="M4 12h16m-5-5 5 5-5 5"/>',
   check: '<path d="m5 12 4 4L19 6"/>',
   error: '<path d="M12 8v6m0 3v.1"/><path d="m12 3 10 18H2Z"/>',
@@ -31,13 +33,13 @@ const menuVariants = [
     id: 'B',
     title: '分层摘要',
     description:
-      '<strong>推荐：层次清楚，文件仍可见。</strong>第一行是结果与时间，第二行是文件，第三行是去向与大小。比双行多一点高度，扫描更轻松。',
+      '<strong>层次清楚，文件仍可见。</strong>第一行是结果与时间，第二行是文件，第三行是去向与大小。比双行多一点高度，扫描更轻松。',
   },
   {
     id: 'C',
     title: '摘要优先',
     description:
-      '<strong>最安静，也最省空间。</strong>只显示结果、内容类型与方向。文件名收进详情，适合主要同步截图、不依赖文件名确认的习惯。',
+      '<strong>已选定：摘要优先。</strong>只显示结果、内容类型与方向。文件名收进详情，适合主要同步截图、不依赖文件名确认的习惯。',
   },
 ];
 const iconVariants = [
@@ -46,12 +48,12 @@ const iconVariants = [
   {
     id: 'badge',
     title: '③ 右下角徽标',
-    description: '保留主图标，叠加方向、对号或感叹号。语义直接，真实尺寸下细节偏小。',
+    description: '已选定：保留主图标，右下角用纯上箭头／下箭头，不带托盘；完成显示对号，失败显示感叹号。',
   },
   {
     id: 'mono',
     title: '④ 单色切换',
-    description: '推荐：方向箭头 → 对号 → 默认图标。像素利用率高，操作期间暂时弱化品牌识别。',
+    description: '方向箭头 → 对号 → 默认图标。像素利用率高，操作期间暂时弱化品牌识别。',
   },
 ];
 const stateLabels = { idle: '待机', upload: '上传中', download: '接收中', success: '已完成', error: '失败' };
@@ -68,8 +70,8 @@ const samples = {
   empty: { name: '', type: '', size: '', sync: true },
 };
 const ui = {
-  menu: 'B',
-  icon: 'mono',
+  menu: 'C',
+  icon: 'badge',
   state: 'idle',
   scenario: 'image',
   direction: 'upload',
@@ -98,8 +100,9 @@ function iconMarkup(variant, state) {
     return `<span class="status-icon ${busy ? 'is-busy' : ''}">${symbol(shape, motion)}</span>`;
   }
   if (variant === 'badge') {
+    const badgeShape = { upload: 'arrowUp', download: 'arrowDown', error: 'bang' }[state] || shape;
     const badge =
-      state === 'idle' ? '' : `<span class="badge">${symbol(state === 'error' ? 'bang' : shape, motion)}</span>`;
+      state === 'idle' ? '' : `<span class="badge">${symbol(badgeShape, motion)}</span>`;
     return `<span class="status-icon ${busy ? 'is-busy' : ''}">${symbol('clipboard')}${badge}</span>`;
   }
   const innerShape = state === 'idle' ? 'clipboard' : shape;
@@ -249,7 +252,7 @@ function renderSelection() {
   const menu = menuVariants.find((item) => item.id === ui.menu);
   const icon = iconVariants.find((item) => item.id === ui.icon);
   $('#selection').innerHTML =
-    `${symbol('check')}当前组合：${menu.id} · ${menu.title} ＋ ${icon.title}。可以直接用这个编号告诉我你的选择。`;
+    `${symbol('check')}当前组合：${menu.id} · ${menu.title} ＋ ${icon.title}。已确认方案为 C＋③，其余组合可继续预览比较。`;
 }
 function render() {
   document
