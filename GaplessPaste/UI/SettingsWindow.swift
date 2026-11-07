@@ -159,6 +159,8 @@ struct SettingsView: View {
                     .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
             }
             Divider()
+            PreviewTextPreferences()
+            Divider()
             footer
         }
         .frame(minWidth: 620, minHeight: 400)

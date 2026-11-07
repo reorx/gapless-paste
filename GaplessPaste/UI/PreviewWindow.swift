@@ -66,10 +66,10 @@ final class PreviewWindowModel: ObservableObject {
     }
     /// 内存预览状态：key = 远端路径。窗口存续期间不失效，切回已看过的文件瞬时加载
     @Published private(set) var previews: [String: PreviewState] = [:]
-    /// 已落到持久化缓存的文件：key = 远端路径。复制/下载按钮由此取本地文件
-    /// （二进制文件不可预览但同样已下载，可复制/下载）
+    /// 已落到持久化缓存的文件：key = 远端路径。复制/下载/打开按钮由此取本地文件
+    /// （二进制文件不可预览但同样已下载，可复制/下载/打开）
     @Published private(set) var downloadedFiles: [String: URL] = [:]
-    /// 复制/下载动作的短暂反馈（顶栏展示，3s 自动消失）
+    /// 文件动作的短暂反馈（顶栏展示，3s 自动消失）
     @Published private(set) var actionFeedback: String?
     /// 图像缩放倍率：key = 远端路径，缺省 = fit 模式（适应窗口，不放大超过原图）
     @Published private(set) var imageZoom: [String: CGFloat] = [:]
@@ -336,7 +336,39 @@ final class PreviewWindowModel: ObservableObject {
         }
     }
 
-    // MARK: - 复制 / 下载
+    // MARK: - 复制 / 下载 / 打开
+
+    /// 交给系统默认应用打开完整缓存。URL 原样传递，不经 shell，不回传外部编辑。
+    func openFile(_ node: PreviewNode) {
+        guard let localURL = downloadedFiles[node.id] else {
+            showFeedback("文件尚未下载完成")
+            return
+        }
+        do {
+            guard FileManager.default.fileExists(atPath: localURL.path) else {
+                throw CocoaError(.fileNoSuchFile)
+            }
+            guard let applicationURL = NSWorkspace.shared.urlForApplication(toOpen: localURL) else {
+                throw NSError(domain: NSOSStatusErrorDomain, code: -10814,
+                              userInfo: [NSLocalizedDescriptionKey: "系统找不到可以打开此文件的默认应用"])
+            }
+            let configuration = NSWorkspace.OpenConfiguration()
+            NSWorkspace.shared.open([localURL], withApplicationAt: applicationURL, configuration: configuration) { [weak self] _, error in
+                Task { @MainActor in
+                    guard let self else { return }
+                    if let error {
+                        self.log.error("预览窗口：打开 \(localURL.path) 失败：\(error.localizedDescription)")
+                        self.showFeedback("打开失败：\(error.localizedDescription)")
+                    } else {
+                        self.log.info("预览窗口：本地副本已交给 \(applicationURL.lastPathComponent)：\(localURL.path)")
+                    }
+                }
+            }
+        } catch {
+            log.error("预览窗口：打开 \(localURL.path) 失败：\(error.localizedDescription)")
+            showFeedback("打开失败：\(error.localizedDescription)")
+        }
+    }
 
     /// ⌘C：把选中的、已下载完成的文件以文件引用写入本地剪贴板（Finder ⌘V 可粘贴出文件）
     func copySelectedFiles() {
@@ -377,7 +409,7 @@ final class PreviewWindowModel: ObservableObject {
         }
     }
 
-    /// 该文件是否已在本地缓存（复制/下载按钮的可用条件）
+    /// 该文件是否已在本地缓存（复制/下载/打开按钮的可用条件）
     func canExport(_ node: PreviewNode) -> Bool {
         downloadedFiles[node.id] != nil
     }
@@ -599,7 +631,8 @@ struct PreviewWindowView: View {
                         },
                         onRefresh: { model.refreshFile(file) },
                         onCopy: { model.copyFiles([file]) },
-                        onSave: { model.saveFile(file) }
+                        onSave: { model.saveFile(file) },
+                        onOpen: { model.openFile(file) }
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     if file.id != files.last?.id {
@@ -683,6 +716,7 @@ private struct PreviewPane: View {
     let onRefresh: () -> Void
     let onCopy: () -> Void
     let onSave: () -> Void
+    let onOpen: () -> Void
 
     /// fit 模式的实际缩放系数（由内容区几何尺寸算出，供百分比展示与 +/−/pinch 起点用）
     @State private var fittedScale: CGFloat = 1
@@ -758,6 +792,13 @@ private struct PreviewPane: View {
             .accessibilityIdentifier("preview-save")
             .disabled(!canExport)
             .help("下载到本地…")
+            Button(action: onOpen) {
+                Image(systemName: "arrow.up.forward.app")
+            }
+            .accessibilityIdentifier("preview-open")
+            .accessibilityLabel("用默认应用打开（本地副本）")
+            .disabled(!canExport)
+            .help("用默认应用打开（本地副本）")
         }
         .buttonStyle(.borderless)
         .padding(.horizontal, 8)
@@ -833,13 +874,7 @@ private struct PreviewPane: View {
                         .padding(.vertical, 3)
                         .background(.quaternary.opacity(0.4))
                 }
-                ScrollView {
-                    Text(text)
-                        .font(.system(.caption, design: .monospaced))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
-                }
+                PreviewTextBody(text: text)
             }
         case .binary(let byteCount):
             VStack(spacing: 8) {
