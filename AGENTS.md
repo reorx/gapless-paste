@@ -14,6 +14,7 @@ macOS 菜单栏工具：把本机剪贴板里的截图/文件/文本以最少步
 - `kb/docs/features.md` — 各功能的行为规则（上传、命名与重名、剪贴板同步、传输层、配置、Dock 形态）。改这些行为或菜单前读
 - `kb/docs/preview-window.md` — 预览窗口的导航、预览类型、字号、缩放、导出、默认应用打开与缓存规则。改预览窗口或预览显示偏好前读
 - `kb/docs/release.md` — 发版方式、CI 流程、secrets、cask 下载地址、本地出包、产物验收与失败处理。发版或改发布链路前读
+- `kb/sessions/2026-11-07-release-v0.4.0.md` — v0.4.0（build 8）发布与签名、公证、Sparkle feed、Homebrew 下载验收记录
 - `kb/docs/ui-acceptance.md` — 验收通道、脚本清单、DEBUG 钩子、已踩过的坑。做真机 UI 验收或写新 AX 脚本前必读
 - `kb/plans/2026-10-20-menu-bar-summary-and-status-badge.md` — 已实现的 C 摘要＋右下角纯上下箭头徽标计划与验收记录；菜单宽 288 pt。Mockup 仅保存在 `tmp/2026-10-20-menu-bar-mockup/mockup/`，不入库
 - `kb/plans/2026-07-06-gapless-paste-v1-spec.md` — 原始需求与决策背景；部分内容已过时，现状以 `kb/docs/` 为准

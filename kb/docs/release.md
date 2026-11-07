@@ -1,6 +1,6 @@
 ---
 created: 2026-10-17
-updated: 2026-10-20
+updated: 2026-11-07
 tags: [release, signing, notarization, homebrew, ci]
 ---
 
@@ -19,11 +19,11 @@ brew install --cask reorx/tap/gapless-paste
 在 master 上打 `vMAJOR.MINOR.PATCH` tag 并 push，其余全部由 CI 完成：
 
 ```sh
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.4.0
+git push origin v0.4.0
 ```
 
-版本号只来自 tag（`v0.3.0` → `CFBundleShortVersionString` 0.3.0），构建号取 CI 的 run number。`project.yml` 里的 `MARKETING_VERSION` 只是本地构建的占位，发版不用改它。Release 发布后不重写 tag 或替换产物，修复发新版本。
+版本号只来自 tag（`v0.4.0` → `CFBundleShortVersionString` 0.4.0），构建号取 CI 的 run number。`project.yml` 里的 `MARKETING_VERSION` 只是本地构建的占位，发版不用改它。Release 发布后不重写 tag 或替换产物，修复发新版本。
 
 ## CI 流程
 
@@ -86,7 +86,7 @@ make notarize-app      # 公证 app 并钉票据
 make dmg               # → dist/GaplessPaste-<version>.dmg
 make notarize          # 签 dmg + 公证 + staple + 终验
 make appcast           # 对最终 dmg 签名，生成 dist/appcast.xml 并自校验
-make release-local VERSION=0.3.0 BUILD_NUMBER=7 SPARKLE_PRIVATE_KEY_FILE="$HOME/Sync/apple-developer/sparkle/gapless-paste_ed25519.key"
+make release-local VERSION=0.4.0 BUILD_NUMBER=8 SPARKLE_PRIVATE_KEY_FILE="$HOME/Sync/apple-developer/sparkle/gapless-paste_ed25519.key"
 # 上述步骤连跑，不上传、不改 tap；指定密钥文件可避免本机首次访问钥匙串的授权弹窗
 ```
 
@@ -111,7 +111,7 @@ CI 只把该 secret 写入 `$RUNNER_TEMP/sparkle-ed25519.key`（600 权限），
 
 首次接入的实机验收用相同源码构建 0.1.9 / build 1、Developer ID 签名后放临时目录，从真实 feed 更新到 0.2.0；生产 v0.1.x 本身未内置 Sparkle，需要先经 dmg/Homebrew 升级一次。
 
-当前 feed、签名和公钥的分发检查已通过；真实每日自动检查提示并由用户确认安装的完整流程仍待自然触发验收，跟进项见 `kb/next-up.md`。
+v0.4.0（build 8）的 feed、签名、公钥、Homebrew 下载和实际发布包的 Gatekeeper 检查已通过，记录见 [发布验收](../sessions/2026-11-07-release-v0.4.0.md)。真实每日自动检查提示并由用户确认安装的完整流程仍待自然触发验收，跟进项见 `kb/next-up.md`。
 
 ## 发布后验收
 
